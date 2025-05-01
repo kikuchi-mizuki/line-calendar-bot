@@ -1,0 +1,51 @@
+/Users/kikuchimizuki/Desktop/LINEでカレンダー/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+ * Serving Flask app 'app'
+ * Debug mode: on
+2025-04-26 23:41:39,583 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.0.207:5001
+2025-04-26 23:41:39,583 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-04-26 23:41:39,584 - werkzeug - INFO -  * Restarting with stat
+/Users/kikuchimizuki/Desktop/LINEでカレンダー/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+2025-04-26 23:41:40,198 - werkzeug - WARNING -  * Debugger is active!
+2025-04-26 23:41:40,204 - werkzeug - INFO -  * Debugger PIN: 420-862-915
+2025-04-26 23:45:17,415 - __main__ - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[]}
+2025-04-26 23:45:17,416 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:45:17] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:45:31,309 - __main__ - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558425354423763116","quoteToken":"-5F2BTLZJgAlVyLMTR4Md5FFRYNGp9rqxLdN4lIhENiTxFzvQWS54qJny5wDbx_jLqSFYrHmyWpAP1Sm8_xx-ZL45q_DaInvdQpYLVdzWCEbI2jY1UA2osAKsdvbMaewBhCMbsE2DY1KhoCBC6J8sw","text":"今日15時から田中さんと打ち合わせ"},"webhookEventId":"01JSS8ZQPN3WESH0GPNHB789T8","deliveryContext":{"isRedelivery":false},"timestamp":1745678753001,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"ad03d57427324a3dbf95216ffbb8a776","mode":"active"}]}
+2025-04-26 23:45:31,555 - googleapiclient.discovery_cache - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-04-26 23:45:32,064 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:45:32] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:45:53,581 - __main__ - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558425387207229935","quoteToken":"FNMcSl2FIljivJnydDxSahbE5Iq7AS4q1yf3XurpsB3_lpoiLcAiCumsTHk_XFWxXR6v8WRkL-Wp71cA61eXo0m3wInpUjJj6GOMzXHzfSglN3x3XNKQLWwrwHOArvA2I7Am3ieWNEHLY13kqIl-NA","text":"今日15時から田中さんと打ち合わせを入れておいて"},"webhookEventId":"01JSS90ABJH53AJMQ8GX3A8B4X","deliveryContext":{"isRedelivery":false},"timestamp":1745678772429,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"63be7f0a816f400d91e4f0cc95cbfbbe","mode":"active"}]}
+2025-04-26 23:45:53,655 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:45:53] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:46:12,659 - __main__ - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558425634452537552","quoteToken":"DmTrsJmEAHOsFNLyt4Nn23Eu8TvXISH4dK5h2IBZ7xwbRdEDN5T7zhhQvFwqxP3ce7dFDCkPeuH1MsAhnGzwn98_AegmSER9v7dv30QuqmBlsC1xUND52tldMWhRSCGmkXmMrT4PGD3uvp8pY-MLnw","text":"今日15時から田中さんと打ち合わせを入れておいて"},"webhookEventId":"01JSS94T6ZS2MX1S274R2TD55P","deliveryContext":{"isRedelivery":false},"timestamp":1745678919880,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"2a203740702f4c07a56959ea81415d56","mode":"active"}]}
+2025-04-26 23:46:12,752 - calendar_chat - INFO - 予定の重複チェック - 検索範囲: 2025-04-26 14:45:00+09:00 〜 2025-04-26 16:15:00+09:00
+2025-04-26 23:46:12,921 - calendar_chat - INFO - 検索範囲内の予定数: 4
+/Users/kikuchimizuki/Desktop/LINEでカレンダー/app.py:281: LineBotSdkDeprecatedIn30: Call to deprecated method reply_message. (Use 'from linebot.v3.messaging import MessagingApi' and 'MessagingApi(...).reply_message(...)' instead. See https://github.com/line/line-bot-sdk-python/blob/master/README.rst for more details.) -- Deprecated since version 3.0.0.
+  line_bot_api.reply_message(
+2025-04-26 23:46:13,042 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:46:13] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:48:50,716 - app - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558425651833471045","quoteToken":"5ZNSy5oAgeLfNOhphRWdF-y_AC5EwhZZpw9RBBadBsO6OmcXU6D1iMjbjvFrYN8ccVD5ajtQ4qpKXBbrux5iGhye6EP8WqPMKvlG4W6vemLNnkQ_98irRPSR6A5vjULfiOwOlT_cubYSKT3RKFv-wg","text":"今日の予定を教えて"},"webhookEventId":"01JSS954P1KVTN9VGEYAF6RNPT","deliveryContext":{"isRedelivery":false},"timestamp":1745678930119,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"1731820e4e4e41c0a78d9dfd4240741c","mode":"active"}]}
+2025-04-26 23:48:50,730 - __main__ - ERROR - カレンダー操作中にエラーが発生: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:48:50,730 - __main__ - ERROR - Full error details:
+Traceback (most recent call last):
+  File "/Users/kikuchimizuki/Desktop/LINEでカレンダー/app.py", line 221, in handle_calendar_operation
+    end_time = parsed_data.get('end_time', start_time + timedelta(days=7))
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:48:50,833 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:48:50] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:50:35,294 - app - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558425827290382746","quoteToken":"HcAAqbo-H_Z1d4CZA8nQHbw-YKXFgnWU88cdxNsHNECDw_PS9UDN45xwugIHLTZxZC4i7iJXZTOiHKKa8ylZo1hpilMcSqI1S7XDjrBIKPiQ_Ov8y4dtKCb0GAS8c0yuwn0aZkxC8CHV_4Gso_HWtQ","text":"今日の予定を教えて"},"webhookEventId":"01JSS98ATKFNXSQRAAM6JVZMT2","deliveryContext":{"isRedelivery":false},"timestamp":1745679034713,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"908bce523fb74ed591b5762bfdb3cc27","mode":"active"}]}
+2025-04-26 23:50:35,306 - __main__ - ERROR - カレンダー操作中にエラーが発生: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:50:35,306 - __main__ - ERROR - Full error details:
+Traceback (most recent call last):
+  File "/Users/kikuchimizuki/Desktop/LINEでカレンダー/app.py", line 221, in handle_calendar_operation
+    end_time = parsed_data.get('end_time', start_time + timedelta(days=7))
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:50:35,405 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:50:35] "POST /callback HTTP/1.1" 200 -
+2025-04-26 23:52:41,912 - app - INFO - Request body: {"destination":"Ud91468152e7f055e3ccdeea0d1ecd26c","events":[{"type":"message","message":{"type":"text","id":"558426039705927851","quoteToken":"uZhOMmkS0QKCK0PgUjv3pcAZAQi26KFv0oc-ULw8xDYGQYD8FWjcy_M7x0ang_2SJoXpVdefOwsd-yh-uxzPVpgaoiupikxV0ZJUg4WrXPMKYrN7-di889TXh5zxmROBWIp5rUnGKWs95F4Bi72SRQ","text":"今日の予定を教えて"},"webhookEventId":"01JSS9C6ES0R7SMXB3NRNERE3F","deliveryContext":{"isRedelivery":false},"timestamp":1745679161310,"source":{"type":"user","userId":"U6a99e85de7d2922e21b6769f9c98fd5b"},"replyToken":"33f8e470d0f94750b3feae6d2e18530d","mode":"active"}]}
+2025-04-26 23:52:41,925 - __main__ - ERROR - カレンダー操作中にエラーが発生: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:52:41,925 - __main__ - ERROR - Full error details:
+Traceback (most recent call last):
+  File "/Users/kikuchimizuki/Desktop/LINEでカレンダー/app.py", line 221, in handle_calendar_operation
+    end_time = parsed_data.get('end_time', start_time + timedelta(days=7))
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'datetime.timedelta'
+2025-04-26 23:52:42,053 - werkzeug - INFO - 127.0.0.1 - - [26/Apr/2025 23:52:42] "POST /callback HTTP/1.1" 200 -
