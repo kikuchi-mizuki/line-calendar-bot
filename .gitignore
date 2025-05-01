@@ -6,4 +6,5 @@ __pycache__/
 token.pickle
 credentials.json
 service-account.json
-test_credentials.json 
+test_credentials.json
+.DS_Store 
