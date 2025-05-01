@@ -35,8 +35,7 @@ logging.basicConfig(
     level=logging.DEBUG,  # INFOからDEBUGに変更してより詳細なログを取得
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s\n    %(pathname)s:%(lineno)d',
     handlers=[
-        logging.FileHandler("app.log", encoding="utf-8", mode='a'),
-        logging.StreamHandler()
+        logging.StreamHandler()  # 標準出力のみを使用
     ]
 )
 logger = logging.getLogger(__name__)
