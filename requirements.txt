@@ -8,4 +8,5 @@ pytz
 spacy
 ja-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/ja_core_news_sm-3.7.0/ja_core_news_sm-3.7.0.tar.gz
 jaconv
-gunicorn 
+gunicorn
+dateparser 
