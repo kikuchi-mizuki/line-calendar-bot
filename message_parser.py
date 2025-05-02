@@ -9,11 +9,14 @@ from dateparser.conf import Settings
 import traceback
 import pytz
 import jaconv
-from extractors.datetime_extractor import extract_datetime
+from extractors.datetime_extractor import DateTimeExtractor
 from extractors.title_extractor import extract_title_from_text
 from extractors.recurrence_extractor import extract_recurrence
 
 logger = logging.getLogger(__name__)
+
+# DateTimeExtractorのインスタンスを作成
+datetime_extractor = DateTimeExtractor()
 
 # spaCyモデルの読み込み
 try:
@@ -500,191 +503,19 @@ def extract_duration_from_message(message: str) -> Optional[int]:
 
 def extract_datetime_from_message(message: str, is_update: bool = False) -> Optional[Dict[str, Optional[datetime]]]:
     try:
-        # 日本時間のタイムゾーンを設定
-        JST = pytz.timezone('Asia/Tokyo')
-        now = datetime.now(JST)
+        # DateTimeExtractorを使用して日時を抽出
+        start_time, end_time = datetime_extractor.extract(message)
         
-        # 日付パターンの定義
-        date_patterns = [
-            r'(\d+)月(\d+)日',
-            r'(\d+)日',
-            r'今日',
-            r'明日',
-            r'明後日',
-            r'来週の?[月火水木金土日]曜日?',
-        ]
-
-        # 日付の抽出
-        target_date = None
-        for pattern in date_patterns:
-            match = re.search(pattern, message)
-            if match:
-                if pattern == r'今日':
-                    target_date = now.date()
-                elif pattern == r'明日':
-                    target_date = (now + timedelta(days=1)).date()
-                elif pattern == r'明後日':
-                    target_date = (now + timedelta(days=2)).date()
-                elif pattern.startswith(r'来週'):
-                    weekday_str = re.search(r'[月火水木金土日]', match.group(0)).group(0)
-                    target_date = get_next_weekday(weekday_str).date()
-                else:
-                    if len(match.groups()) == 2:  # 月日が指定されている場合
-                        month, day = map(int, match.groups())
-                        year = now.year
-                        target_date = datetime(year, month, day).date()
-                    else:  # 日のみ指定されている場合
-                        day = int(match.group(1))
-                        target_date = now.replace(day=day).date()
-                        if target_date < now.date():
-                            target_date = target_date.replace(year=now.year + 1)
-                break
-
-        if not target_date:
-            target_date = now.date()
-
-        if is_update:
-            # 元の時間を抽出するパターンを拡充
-            original_time_patterns = [
-                r'(\d+)時半?(?:(\d+)分)?(?:から|より|の|を|に|の予定|から始まる)',
-                r'(\d+)時半(?:から|より|の|を|に|の予定|から始まる)',
-                r'(\d+)時(?:(\d+)分)?(?:から|より|の|を|に|の予定|から始まる)',
-            ]
-            
-            # 新しい時間を抽出するパターンを拡充
-            new_time_patterns = [
-                r'(?:(\d+)時半?(?:(\d+)分)?(?:から|より|の|を|に))(?:変更|移動|ずらす|する)',
-                r'(?:(\d+)時半(?:から|より|の|を|に))(?:変更|移動|ずらす|する)',
-                r'(\d+)時(?:(\d+)分)?(?:から|より|の|を|に)(?:変更|移動|ずらす|する)',
-                r'(\d+)時(?:(\d+)分)?から(?:に変更|に)',
-                r'(\d+)時(?:(\d+)分)?に(?:変更|移動|ずらす|する)',
-                r'(\d+)時(?:(\d+)分)?からに変更',  # 新しいパターン
-                r'(\d+)時(?:(\d+)分)?に変更して',  # 新しいパターン
-                r'(\d+)時(?:(\d+)分)?からに変更して'  # 新しいパターン
-            ]
-
-            # 時間の長さを変更するパターン
-            duration_patterns = [
-                r'(\d+)時間(?:(\d+)分)?に(?:変更|する)',
-                r'(\d+)時間に',
-                r'(\d+)分に(?:変更|する)',
-                r'(\d+)分間に(?:変更|する)',
-            ]
-            
-            # 元の時間を探す
-            original_time = None
-            for pattern in original_time_patterns:
-                match = re.search(pattern, message)
-                if match:
-                    hour = int(match.group(1))
-                    # '半'が含まれている場合は30分として処理
-                    if '半' in match.group(0):
-                        minute = 30
-                    else:
-                        minute = int(match.group(2)) if match.group(2) else 0
-                    original_time = datetime.combine(target_date, time(hour, minute))
-                    original_time = JST.localize(original_time)
-                    logger.debug(f"元の時間を抽出: {original_time}")
-                    break
-                    
-            if not original_time:
-                logger.error("元の時間の抽出に失敗")
-                return None
-
-            # まず時間の長さの変更をチェック
-            for pattern in duration_patterns:
-                match = re.search(pattern, message)
-                if match:
-                    if '時間' in pattern:
-                        hours = int(match.group(1))
-                        minutes = int(match.group(2)) if len(match.groups()) > 1 and match.group(2) else 0
-                        new_duration = timedelta(hours=hours, minutes=minutes)
-                        logger.debug(f"時間の長さの変更を検出: {new_duration}")
-                        return {
-                            'start_time': original_time,
-                            'end_time': original_time + new_duration,
-                            'new_duration': new_duration
-                        }
-                    else:
-                        minutes = int(match.group(1))
-                        new_duration = timedelta(minutes=minutes)
-                        logger.debug(f"時間の長さの変更を検出: {new_duration}")
-                        return {
-                            'start_time': original_time,
-                            'end_time': original_time + new_duration,
-                            'new_duration': new_duration
-                        }
-                    
-            # 開始時刻の変更をチェック
-            for pattern in new_time_patterns:
-                match = re.search(pattern, message)
-                if match:
-                    hour = int(match.group(1))
-                    # '半'が含まれている場合は30分として処理
-                    if '半' in match.group(0):
-                        minute = 30
-                    else:
-                        minute = int(match.group(2)) if match.group(2) else 0
-                    new_time = datetime.combine(target_date, time(hour, minute))
-                    new_time = JST.localize(new_time)
-                    logger.debug(f"新しい時間を抽出: {new_time}")
-                    return {
-                        'start_time': original_time,
-                        'end_time': original_time + timedelta(hours=1),
-                        'new_start_time': new_time
-                    }
-                
-            logger.error("新しい時間の抽出に失敗")
-            return None
-
-        # 通常の時刻抽出（更新以外の場合）
-        time_patterns = [
-            (r'(\d+)時(\d+)分から(\d+)時(\d+)分まで', 4),  # HH:MM-HH:MM
-            (r'(\d+)時から(\d+)時まで', 2),  # HH-HH
-            (r'(\d+)時(\d+)分から', 2),  # HH:MM-
-            (r'(\d+)時から', 1),  # HH-
-            (r'(\d+)時(\d+)分', 2),  # HH:MM
-            (r'(\d+)時', 1),  # HH
-        ]
-
-        start_time = None
-        end_time = None
-
-        for pattern, group_count in time_patterns:
-            match = re.search(pattern, message)
-            if match:
-                if group_count == 4:  # HH:MM-HH:MM
-                    start_hour, start_minute, end_hour, end_minute = map(int, match.groups())
-                    start_time = datetime.combine(target_date, time(start_hour, start_minute))
-                    end_time = datetime.combine(target_date, time(end_hour, end_minute))
-                elif group_count == 2:
-                    if 'まで' in pattern:  # HH-HH
-                        start_hour, end_hour = map(int, match.groups())
-                        start_time = datetime.combine(target_date, time(start_hour, 0))
-                        end_time = datetime.combine(target_date, time(end_hour, 0))
-                    else:  # HH:MM
-                        hour, minute = map(int, match.groups())
-                        start_time = datetime.combine(target_date, time(hour, minute))
-                        end_time = start_time + timedelta(hours=1)
-                elif group_count == 1:  # HH
-                    hour = int(match.group(1))
-                    start_time = datetime.combine(target_date, time(hour, 0))
-                    end_time = start_time + timedelta(hours=1)
-                break
-
-        # 時刻が指定されていない場合は、その日の全日を範囲とする
         if not start_time:
-            start_time = datetime.combine(target_date, time(0, 0))
-            end_time = datetime.combine(target_date, time(23, 59))
-
-        # タイムゾーンを設定
-        start_time = JST.localize(start_time)
-        end_time = JST.localize(end_time)
-
-        return {'start_time': start_time, 'end_time': end_time}
-
+            return None
+            
+        # 結果を辞書形式で返す
+        return {
+            'start': start_time,
+            'end': end_time
+        }
     except Exception as e:
-        logger.error(f"日時の抽出中にエラーが発生: {str(e)}")
+        logger.error(f"日時抽出中にエラーが発生しました: {str(e)}")
         logger.error(traceback.format_exc())
         return None
 
