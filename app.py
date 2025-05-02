@@ -18,13 +18,13 @@ import logging
 import traceback
 from datetime import datetime, timedelta, timezone
 import pytz
-from .message_parser import (
+from message_parser import (
     parse_message,
     extract_title,
     extract_location,
     extract_person
 )
-from .calendar_chat import CalendarChat
+from calendar_chat import CalendarChat
 from typing import Dict, Tuple, Any, Optional
 import spacy
 
