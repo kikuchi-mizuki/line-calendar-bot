@@ -13,6 +13,8 @@ from google.auth.transport.requests import Request
 import pickle
 import pytz
 import traceback
+import json
+import tempfile
 
 # 警告メッセージを抑制
 warnings.filterwarnings('ignore', message='file_cache is only supported with oauth2client<4.0.0')
@@ -24,6 +26,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def get_credentials():
+    """環境変数から認証情報を取得し、一時ファイルとして保存する"""
+    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
+    if not credentials_json:
+        raise ValueError("GOOGLE_CREDENTIALS環境変数が設定されていません")
+    
+    try:
+        # JSONの形式を確認
+        json.loads(credentials_json)
+    except json.JSONDecodeError:
+        raise ValueError("GOOGLE_CREDENTIALSの形式が正しくありません")
+    
+    # 一時ファイルとして保存
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+        temp_file.write(credentials_json)
+        return temp_file.name
+
 class CalendarChat:
     def __init__(self):
         """初期化"""
@@ -31,14 +50,15 @@ class CalendarChat:
         self.creds = None
         self.service = None
         self.timezone = pytz.timezone('Asia/Tokyo')
+        self.credentials_file = None
         self.initialize_service()
 
     def initialize_service(self):
         """Google Calendar APIのサービスを初期化する"""
         try:
-            # credentials.jsonの存在確認
-            if not os.path.exists('credentials.json'):
-                raise FileNotFoundError("credentials.jsonファイルが見つかりません。Google Cloud Consoleから取得した認証情報を配置してください。")
+            # 環境変数から認証情報を取得
+            self.credentials_file = get_credentials()
+            logger.info("認証情報を一時ファイルとして保存しました")
 
             # トークンファイルが存在する場合は読み込む
             if os.path.exists('token.pickle'):
@@ -55,7 +75,7 @@ class CalendarChat:
                 else:
                     logger.info("新しい認証フローを開始します")
                     flow = InstalledAppFlow.from_client_secrets_file(
-                        'credentials.json', self.SCOPES)
+                        self.credentials_file, self.SCOPES)
                     self.creds = flow.run_local_server(port=0)
                 
                 # トークンを保存
@@ -68,13 +88,18 @@ class CalendarChat:
             self.service = build('calendar', 'v3', credentials=self.creds)
             logger.info("Google Calendar API service initialized successfully")
             
-        except FileNotFoundError as e:
-            logger.error(f"認証ファイルエラー: {str(e)}")
-            raise
         except Exception as e:
             logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
             logger.error("詳細なエラー情報:", exc_info=True)
             raise
+        finally:
+            # 一時ファイルを削除
+            if self.credentials_file and os.path.exists(self.credentials_file):
+                try:
+                    os.unlink(self.credentials_file)
+                    logger.info("一時ファイルを削除しました")
+                except Exception as e:
+                    logger.warning(f"一時ファイルの削除に失敗: {str(e)}")
 
     def get_events(self, time_min: datetime = None, time_max: datetime = None) -> list:
         """Get calendar events for the specified time range."""
