@@ -298,86 +298,74 @@ def normalize_text(text: str) -> str:
 
 def parse_message(message: str) -> Dict[str, Any]:
     """
-    メッセージを解析して予定の操作タイプと必要な情報を抽出する
+    メッセージを解析して必要な情報を抽出する
     
     Args:
         message (str): ユーザーからのメッセージ
         
     Returns:
-        Dict[str, Any]: 解析結果
+        Dict[str, Any]: 抽出された情報を含む辞書
     """
-    # 操作タイプの判定
-    operation_type = None
-    
-    # 更新操作の判定（より具体的なキーワードを優先）
-    for keyword in UPDATE_KEYWORDS:
-        if keyword in message and ('変更' in message or 'に変更' in message):
-            operation_type = 'update'
-            break
-    
-    # 削除操作の判定
-    if not operation_type:
+    try:
+        # メッセージの正規化
+        normalized_message = normalize_text(message)
+        
+        # 日時情報の抽出
+        datetime_info = datetime_extractor.extract(normalized_message)
+        if datetime_info is None or datetime_info[0] is None:
+            return {'type': 'error', 'message': '日時情報を抽出できませんでした。'}
+        
+        start_time, end_time = datetime_info
+        
+        # タイトルと場所の抽出
+        title_info = title_extractor.extract(normalized_message)
+        if title_info is None or title_info[0] is None:
+            title = "予定"  # デフォルトのタイトル
+        else:
+            title = title_info[0]
+        location = title_info[1] if title_info else None
+        
+        # 人物の抽出（簡易的な実装）
+        person = None
+        person_match = re.search(r'(\w+)(?:さん|君|様|氏)と', normalized_message)
+        if person_match:
+            person = person_match.group(1)
+        
+        logger.info(f"抽出結果 - タイトル: {title}, 場所: {location}, 人物: {person}")
+        
+        # 操作タイプの判定
+        operation_type = 'add'  # デフォルトは追加
         for keyword in DELETE_KEYWORDS:
-            if keyword in message:
+            if keyword in normalized_message:
                 operation_type = 'delete'
                 break
-    
-    # 追加操作の判定
-    if not operation_type:
-        for keyword in ADD_KEYWORDS:
-            if keyword in message:
-                operation_type = 'add'
+        for keyword in UPDATE_KEYWORDS:
+            if keyword in normalized_message:
+                operation_type = 'update'
                 break
-    
-    # 予定確認の判定（最も一般的なキーワードなので最後にチェック）
-    if not operation_type:
-        for keyword in READ_KEYWORDS:
-            # 更新や変更を示す文字列が含まれていない場合のみ確認操作と判定
-            if keyword in message and not any(update_word in message for update_word in ['変更', 'に変更', 'リスケ', 'ずらす']):
-                operation_type = 'read'
-                break
-    
-    # 操作タイプが不明な場合、日時情報が含まれていれば追加操作と判断
-    if not operation_type:
-        datetime_info = extract_datetime_from_message(message)
-        if datetime_info:
-            operation_type = 'add'
-    
-    if not operation_type:
-        return {'error': '予定の操作タイプが不明です'}
-    
-    # 日時情報の抽出
-    datetime_info = extract_datetime_from_message(message, is_update=(operation_type == 'update'))
-    if not datetime_info:
-        return {'error': '日時情報が見つかりませんでした'}
-    
-    # タイトル、場所、人物の抽出（read操作の場合は不要）
-    title = None
-    location = None
-    person = None
-    if operation_type != 'read':
-        title = extract_title_from_message(message)
-        location = extract_location(message)
-        person = extract_person(message)
-    
-    result = {
-        'operation_type': operation_type,
-        'start_time': datetime_info['start_time'],
-        'end_time': datetime_info['end_time'],
-        'title': title,
-        'location': location,
-        'person': person,
-        'message': message
-    }
-    
-    # 更新操作の場合の追加情報
-    if operation_type == 'update':
-        if 'new_start_time' in datetime_info:
-            result['new_start_time'] = datetime_info['new_start_time']
-        if 'new_duration' in datetime_info:
-            result['new_duration'] = datetime_info['new_duration']
-    
-    return result
+        
+        # 結果の辞書を作成
+        result = {
+            'type': operation_type,
+            'title': title,
+            'location': location,
+            'person': person,
+            'start_time': start_time,
+            'end_time': end_time
+        }
+        
+        # 繰り返し設定の抽出
+        recurrence_info = recurrence_extractor.extract(normalized_message)
+        if recurrence_info:
+            result.update(recurrence_info)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"メッセージの解析中にエラーが発生: {str(e)}")
+        logger.error("スタックトレース:")
+        logger.error(traceback.format_exc())
+        return {'type': 'error', 'message': str(e)}
 
 def extract_title_from_message(message: str) -> Tuple[str, Optional[str], Optional[str]]:
     """
