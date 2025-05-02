@@ -60,28 +60,11 @@ class CalendarChat:
             self.credentials_file = get_credentials()
             logger.info("認証情報を一時ファイルとして保存しました")
 
-            # トークンファイルが存在する場合は読み込む
-            if os.path.exists('token.pickle'):
-                logger.info("既存のトークンファイルを読み込みます")
-                with open('token.pickle', 'rb') as token:
-                    self.creds = pickle.load(token)
-            
-            # 認証情報が無効な場合は更新する
-            if not self.creds or not self.creds.valid:
-                logger.info("認証情報の更新が必要です")
-                if self.creds and self.creds.expired and self.creds.refresh_token:
-                    logger.info("トークンを更新します")
-                    self.creds.refresh(Request())
-                else:
-                    logger.info("新しい認証フローを開始します")
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        self.credentials_file, self.SCOPES)
-                    self.creds = flow.run_local_server(port=0)
-                
-                # トークンを保存
-                logger.info("新しいトークンを保存します")
-                with open('token.pickle', 'wb') as token:
-                    pickle.dump(self.creds, token)
+            # サービスアカウントの認証情報を使用してサービスを初期化
+            self.creds = service_account.Credentials.from_service_account_file(
+                self.credentials_file,
+                scopes=self.SCOPES
+            )
             
             # サービスを構築
             logger.info("Google Calendar APIサービスを初期化します")
