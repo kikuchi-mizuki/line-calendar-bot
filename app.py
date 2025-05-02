@@ -4,7 +4,8 @@ from linebot.v3.messaging import (
     ApiClient,
     MessagingApi,
     ReplyMessageRequest,
-    TextMessage
+    TextMessage,
+    PushMessageRequest
 )
 from linebot.v3.webhook import WebhookHandler
 from linebot.v3.webhooks import (
@@ -33,12 +34,19 @@ app = Flask(__name__)
 # ロギングの設定をより詳細に
 logging.basicConfig(
     level=logging.DEBUG,  # INFOからDEBUGに変更してより詳細なログを取得
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s\n    %(pathname)s:%(lineno)d',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s\n    %(pathname)s:%(lineno)d',
     handlers=[
-        logging.StreamHandler()  # 標準出力のみを使用
+        logging.StreamHandler(),  # 標準出力
+        logging.FileHandler('app.log', encoding='utf-8')  # ファイル出力を追加
     ]
 )
 logger = logging.getLogger(__name__)
+
+# アプリケーション起動時のログ
+logger.info("アプリケーションを起動します")
+logger.info(f"環境変数 LINE_CHANNEL_ACCESS_TOKEN: {'設定済み' if os.getenv('LINE_CHANNEL_ACCESS_TOKEN') else '未設定'}")
+logger.info(f"環境変数 LINE_CHANNEL_SECRET: {'設定済み' if os.getenv('LINE_CHANNEL_SECRET') else '未設定'}")
+logger.info(f"環境変数 GOOGLE_CREDENTIALS: {'設定済み' if os.getenv('GOOGLE_CREDENTIALS') else '未設定'}")
 
 # LINE APIの設定
 configuration = Configuration(access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
@@ -483,35 +491,45 @@ def process_message_async(event):
     """
     try:
         # 受信メッセージのログ
-        logger.debug(f"受信メッセージ: {event.message.text}")
+        logger.info(f"非同期処理開始 - ユーザーID: {event.source.user_id}")
+        logger.info(f"受信メッセージ: {event.message.text}")
+        logger.debug(f"イベント詳細: {event}")
         
         # メッセージの解析
         parsed_data = parse_message(event.message.text)
-        logger.debug(f"解析結果: {parsed_data}")
+        logger.info(f"メッセージ解析結果: {parsed_data}")
         
         if not parsed_data:
             logger.error("メッセージの解析に失敗しました")
             raise ValueError("メッセージの解析に失敗しました")
+            
+        if parsed_data.get('type') == 'error':
+            raise ValueError(parsed_data.get('message', 'メッセージの解析に失敗しました'))
 
         # カレンダー操作の処理
-        success, result = handle_calendar_operation(parsed_data.get('operation_type', 'read'), parsed_data)
-        logger.debug(f"カレンダー操作結果: success={success}, result={result}")
+        operation_type = parsed_data.get('type', 'read')
+        logger.info(f"カレンダー操作開始 - タイプ: {operation_type}")
+        logger.debug(f"操作パラメータ: {parsed_data}")
+        
+        success, result = handle_calendar_operation(operation_type, parsed_data)
+        logger.info(f"カレンダー操作結果: success={success}, result={result}")
         
         # レスポンスメッセージの作成
-        response_message = format_response_message(
-            parsed_data.get('operation_type', 'read'),
-            success,
-            result
-        )
-        logger.debug(f"レスポンスメッセージ: {response_message}")
+        response_message = format_response_message(operation_type, success, result)
+        logger.info(f"生成したレスポンスメッセージ: {response_message}")
         
         # 処理結果を新しいメッセージとして送信
+        logger.info("LINE Messaging APIクライアントの初期化開始")
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
-            line_bot_api.push_message(
-                to=event.source.user_id,
-                messages=[TextMessage(text=response_message)]
+            logger.info("プッシュメッセージの送信開始")
+            line_bot_api.push_message_with_http_info(
+                PushMessageRequest(
+                    to=event.source.user_id,
+                    messages=[TextMessage(text=response_message)]
+                )
             )
+            logger.info("プッシュメッセージの送信完了")
         
     except Exception as e:
         logger.error("エラーの詳細情報:")
@@ -521,15 +539,20 @@ def process_message_async(event):
         logger.error(traceback.format_exc())
         
         try:
-            # エラーメッセージを新しいメッセージとして送信
+            logger.info("エラーメッセージの送信開始")
             with ApiClient(configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
-                line_bot_api.push_message(
-                    to=event.source.user_id,
-                    messages=[TextMessage(text="申し訳ありません。エラーが発生しました。\nエラー内容: " + str(e))]
+                line_bot_api.push_message_with_http_info(
+                    PushMessageRequest(
+                        to=event.source.user_id,
+                        messages=[TextMessage(text=f"申し訳ありません。エラーが発生しました。\nエラータイプ: {type(e).__name__}\nエラー内容: {str(e)}")]
+                    )
                 )
+            logger.info("エラーメッセージの送信完了")
         except Exception as reply_error:
             logger.error(f"エラーメッセージの送信にも失敗しました: {str(reply_error)}")
+            logger.error("スタックトレース:")
+            logger.error(traceback.format_exc())
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -538,17 +561,21 @@ def callback():
 
     # リクエストボディを取得
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
+    logger.info("Webhookリクエストを受信しました")
+    logger.debug(f"リクエストボディ: {body}")
+    logger.debug(f"リクエストヘッダー: {dict(request.headers)}")
 
     try:
         # 署名を検証
         handler.handle(body, signature)
+        logger.info("Webhook署名の検証に成功しました")
     except InvalidSignatureError:
-        app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
+        logger.error("Webhook署名の検証に失敗しました")
         abort(400)
     except Exception as e:
-        app.logger.error(f"Error handling webhook: {str(e)}")
-        app.logger.error(traceback.format_exc())
+        logger.error(f"Webhook処理中にエラーが発生: {str(e)}")
+        logger.error("スタックトレース:")
+        logger.error(traceback.format_exc())
 
     # 即座に200 OKを返す
     return 'OK'
@@ -556,23 +583,31 @@ def callback():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     try:
+        logger.info(f"メッセージイベントを受信 - ユーザーID: {event.source.user_id}")
+        logger.debug(f"イベント詳細: {event}")
+
         # 即座に応答メッセージを送信
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
+            logger.info("即時応答メッセージを送信します")
             line_bot_api.reply_message_with_http_info(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
                     messages=[TextMessage(text="メッセージを受け付けました。処理を開始します。")]
                 )
             )
+            logger.info("即時応答メッセージの送信が完了しました")
         
         # 非同期でメッセージを処理
+        logger.info("非同期処理を開始します")
         thread = threading.Thread(target=process_message_async, args=(event,))
         thread.daemon = True  # メインスレッドが終了したら一緒に終了
         thread.start()
+        logger.info(f"非同期処理スレッドを開始しました - スレッドID: {thread.ident}")
         
     except Exception as e:
-        logger.error(f"Error in handle_message: {str(e)}")
+        logger.error(f"メッセージ処理中にエラーが発生: {str(e)}")
+        logger.error("スタックトレース:")
         logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
