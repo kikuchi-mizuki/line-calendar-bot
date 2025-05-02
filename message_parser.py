@@ -11,7 +11,7 @@ import pytz
 import jaconv
 from extractors.datetime_extractor import DateTimeExtractor
 from extractors.title_extractor import TitleExtractor
-from extractors.recurrence_extractor import extract_recurrence
+from extractors.recurrence_extractor import RecurrenceExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 datetime_extractor = DateTimeExtractor()
 # TitleExtractorのインスタンスを作成
 title_extractor = TitleExtractor()
+# RecurrenceExtractorのインスタンスを作成
+recurrence_extractor = RecurrenceExtractor()
 
 # spaCyモデルの読み込み
 try:
@@ -537,77 +539,25 @@ def extract_recurrence_from_message(message: str) -> Optional[Dict[str, Any]]:
     メッセージから繰り返し情報を抽出する
     
     Args:
-        message (str): ユーザーからのメッセージ
+        message (str): メッセージ
         
     Returns:
         Optional[Dict[str, Any]]: 繰り返し情報
     """
-    # 繰り返しパターン
-    recurrence_patterns = [
-        # 毎日
-        (r"毎日", {"freq": "DAILY"}),
-        (r"(\d+)日ごと", {"freq": "DAILY", "interval": lambda m: int(m.group(1))}),
+    try:
+        # メッセージを正規化
+        message = normalize_text(message)
         
-        # 毎週
-        (r"毎週(\w+)曜日", {"freq": "WEEKLY", "byday": lambda m: get_weekday_code(m.group(1))}),
-        (r"(\d+)週間ごと", {"freq": "WEEKLY", "interval": lambda m: int(m.group(1))}),
+        # RecurrenceExtractorを使用して繰り返し情報を抽出
+        recurrence = recurrence_extractor.extract(message)
         
-        # 毎月
-        (r"毎月(\d+)日", {"freq": "MONTHLY", "bymonthday": lambda m: int(m.group(1))}),
-        (r"(\d+)ヶ月ごと", {"freq": "MONTHLY", "interval": lambda m: int(m.group(1))}),
+        logger.info(f"抽出された繰り返し情報: {recurrence}")
+        return recurrence
         
-        # 毎年
-        (r"毎年(\d+)月(\d+)日", {"freq": "YEARLY", "bymonth": lambda m: int(m.group(1)), "bymonthday": lambda m: int(m.group(2))}),
-    ]
-    
-    # 繰り返し回数
-    count_patterns = [
-        (r"(\d+)回", {"count": lambda m: int(m.group(1))}),
-    ]
-    
-    # 終了日
-    until_patterns = [
-        (r"(\d{4})年(\d+)月(\d+)日まで", {"until": lambda m: datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))}),
-        (r"(\d+)月(\d+)日まで", {"until": lambda m: datetime(datetime.now().year, int(m.group(1)), int(m.group(2)))}),
-    ]
-    
-    # 繰り返し情報を抽出
-    recurrence = {}
-    
-    # 繰り返しパターンをチェック
-    for pattern, info in recurrence_patterns:
-        match = re.search(pattern, message)
-        if match:
-            for key, value in info.items():
-                if callable(value):
-                    recurrence[key] = value(match)
-                else:
-                    recurrence[key] = value
-            break
-    
-    # 繰り返し回数をチェック
-    for pattern, info in count_patterns:
-        match = re.search(pattern, message)
-        if match:
-            for key, value in info.items():
-                if callable(value):
-                    recurrence[key] = value(match)
-                else:
-                    recurrence[key] = value
-            break
-    
-    # 終了日をチェック
-    for pattern, info in until_patterns:
-        match = re.search(pattern, message)
-        if match:
-            for key, value in info.items():
-                if callable(value):
-                    recurrence[key] = value(match)
-                else:
-                    recurrence[key] = value
-            break
-    
-    return recurrence if recurrence else None
+    except Exception as e:
+        logger.error(f"繰り返し情報の抽出中にエラーが発生: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None
 
 def get_weekday_code(weekday_str: str) -> str:
     """
