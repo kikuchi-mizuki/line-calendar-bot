@@ -8,6 +8,7 @@ import re
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
+import traceback
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class DateTimeExtractor:
                 match = re.search(pattern, message)
                 if match:
                     extracted_date = date_func(match)
+                    logger.info(f"抽出された日付: {extracted_date}")
                     break
             
             if not extracted_date:
@@ -81,23 +83,28 @@ class DateTimeExtractor:
             
             # 開始時刻の抽出
             for pattern, time_func in self.time_patterns:
-                match = re.search(pattern, message)
+                # "から"の前の時刻を開始時刻として抽出
+                match = re.search(f"{pattern}(?:から|まで|で|に|へ|と|は|が|を|の|も|や|か|ね|よ|な|わ|ぞ|ぜ|だ|です|ます|けど|ので|のに|ば|たら|なら|て|$)", message)
                 if match:
                     hours, minutes = time_func(match)
                     start_time = extracted_date.replace(hour=hours, minute=minutes)
+                    logger.info(f"抽出された開始時刻: {start_time}")
                     break
             
-            # 終了時刻の抽出（開始時刻から1時間後をデフォルトとする）
-            if start_time:
+            # 終了時刻の抽出
+            for pattern, time_func in self.time_patterns:
+                # "まで"の前の時刻を終了時刻として抽出
+                match = re.search(f"{pattern}まで", message)
+                if match:
+                    hours, minutes = time_func(match)
+                    end_time = extracted_date.replace(hour=hours, minute=minutes)
+                    logger.info(f"抽出された終了時刻: {end_time}")
+                    break
+            
+            # 終了時刻が抽出できなかった場合、開始時刻から1時間後をデフォルトとする
+            if start_time and not end_time:
                 end_time = start_time + timedelta(hours=1)
-                
-                # 終了時刻が明示的に指定されている場合
-                for pattern, time_func in self.time_patterns:
-                    match = re.search(f"{pattern}まで", message)
-                    if match:
-                        hours, minutes = time_func(match)
-                        end_time = extracted_date.replace(hour=hours, minute=minutes)
-                        break
+                logger.info(f"デフォルトの終了時刻を設定: {end_time}")
             
             if not start_time or not end_time:
                 logger.warning("時刻を抽出できませんでした")
@@ -106,12 +113,15 @@ class DateTimeExtractor:
             # 終了時刻が開始時刻より前の場合、翌日として扱う
             if end_time < start_time:
                 end_time += timedelta(days=1)
+                logger.info(f"終了時刻を翌日に設定: {end_time}")
             
-            logger.info(f"抽出された日時: {start_time} - {end_time}")
+            logger.info(f"最終的な日時: {start_time} - {end_time}")
             return start_time, end_time
             
         except Exception as e:
             logger.error(f"日時の抽出中にエラーが発生: {str(e)}")
+            logger.error("スタックトレース:")
+            logger.error(traceback.format_exc())
             return None, None
     
     def _create_date(self, month: int, day: int) -> datetime:

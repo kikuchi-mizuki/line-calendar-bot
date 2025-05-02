@@ -70,8 +70,14 @@ class TitleExtractor:
                 for keyword in self.exclude_keywords:
                     message_without_commands = re.sub(keyword, '', message_without_commands)
                 
+                # 助詞を除去（「から」の前の時刻を保持）
+                message_without_particles = re.sub(
+                    r'(?<!\d+時)から|まで|で|に|へ|と|は|が|を|の|も|や|か|ね|よ|な|わ|ぞ|ぜ|だ|です|ます|けど|ので|のに|ば|たら|なら|て',
+                    '', message_without_commands
+                )
+                
                 # 残りのテキストをトリム
-                title = message_without_commands.strip()
+                title = message_without_particles.strip()
                 if title:
                     logger.info(f"抽出されたタイトル: {title}")
             
