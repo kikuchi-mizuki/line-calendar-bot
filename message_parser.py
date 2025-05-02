@@ -10,13 +10,15 @@ import traceback
 import pytz
 import jaconv
 from extractors.datetime_extractor import DateTimeExtractor
-from extractors.title_extractor import extract_title_from_text
+from extractors.title_extractor import TitleExtractor
 from extractors.recurrence_extractor import extract_recurrence
 
 logger = logging.getLogger(__name__)
 
 # DateTimeExtractorのインスタンスを作成
 datetime_extractor = DateTimeExtractor()
+# TitleExtractorのインスタンスを作成
+title_extractor = TitleExtractor()
 
 # spaCyモデルの読み込み
 try:
@@ -352,7 +354,7 @@ def parse_message(message: str) -> Dict[str, Any]:
     location = None
     person = None
     if operation_type != 'read':
-        title = extract_title(message)
+        title = extract_title_from_message(message)
         location = extract_location(message)
         person = extract_person(message)
     
@@ -389,57 +391,18 @@ def extract_title_from_message(message: str) -> Tuple[str, Optional[str], Option
         # メッセージを正規化
         message = normalize_text(message)
         
-        # spaCyで解析
+        # TitleExtractorを使用してタイトルと場所を抽出
+        title, location = title_extractor.extract(message)
+        
+        # spaCyで解析して人物を抽出
         doc = nlp(message)
-        
-        # 場所を示す助詞
-        location_particles = ['で', 'に', 'へ']
-        # 人物を示す助詞
-        person_particles = ['と', 'とともに']
-        
-        # 場所と人物を抽出
-        location = None
         person = None
+        for ent in doc.ents:
+            if ent.label_ == 'PERSON':
+                person = ent.text
+                break
         
-        for i, token in enumerate(doc):
-            # 場所の抽出
-            if token.dep_ in ['nmod'] and token.text in location_particles:
-                for child in token.children:
-                    if child.pos_ in ['NOUN', 'PROPN']:
-                        location = child.text
-                        break
-            
-            # 人物の抽出
-            if token.dep_ in ['nmod'] and token.text in person_particles:
-                for child in token.children:
-                    if child.pos_ in ['NOUN', 'PROPN']:
-                        person = child.text
-                        break
-        
-        # タイトルの抽出
-        title = None
-        
-        # 1. 動詞を含む文節を探す
-        for token in doc:
-            if token.pos_ == 'VERB':
-                # 動詞の文節を取得
-                for child in token.children:
-                    if child.dep_ in ['nsubj', 'obj'] and child.pos_ in ['NOUN', 'PROPN']:
-                        if child.text != location and child.text != person:
-                            title = child.text
-                            break
-                if title:
-                    break
-        
-        # 2. 名詞を含む文節を探す
-        if not title:
-            for token in doc:
-                if token.pos_ in ['NOUN', 'PROPN']:
-                    if token.text != location and token.text != person:
-                        title = token.text
-                        break
-        
-        # 3. タイトルが見つからない場合は「予定」を使用
+        # タイトルが見つからない場合は「予定」を使用
         if not title:
             title = "予定"
         
