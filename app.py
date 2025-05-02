@@ -12,7 +12,6 @@ from linebot.v3.webhooks import (
     TextMessageContent
 )
 from linebot.v3.exceptions import InvalidSignatureError
-from linebot.models import TextSendMessage
 import os
 import logging
 import traceback
@@ -27,6 +26,7 @@ from message_parser import (
 from calendar_chat import CalendarChat
 from typing import Dict, Tuple, Any, Optional
 import spacy
+import threading
 
 app = Flask(__name__)
 
@@ -294,13 +294,23 @@ def try_read_event(parsed_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
         Tuple[bool, Dict[str, Any]]: (成功したかどうか, 結果を含む辞書)
     """
     try:
+        # 現在の日付を取得
+        now = datetime.now(JST)
         start_time = parsed_data.get('start_time')
         end_time = parsed_data.get('end_time')
         
+        # start_timeがNoneの場合、今日の0時を設定
+        if start_time is None:
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # end_timeがNoneの場合、今日の23:59:59を設定
+        if end_time is None:
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
         # タイムゾーン情報を確実に設定
-        if start_time and start_time.tzinfo is None:
+        if start_time.tzinfo is None:
             start_time = JST.localize(start_time)
-        if end_time and end_time.tzinfo is None:
+        if end_time.tzinfo is None:
             end_time = JST.localize(end_time)
             
         # 予定を取得
@@ -467,25 +477,10 @@ def handle_calendar_operation(operation_type: str, parsed_data: dict) -> Tuple[b
         logger.error(traceback.format_exc())
         return False, {'message': f'カレンダー操作中にエラーが発生しました: {str(e)}'}
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    # リクエストヘッダーからX-Line-Signatureを取得
-    signature = request.headers['X-Line-Signature']
-
-    # リクエストボディを取得
-    body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
-
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
-        abort(400)
-
-    return 'OK'
-
-@handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
+def process_message_async(event):
+    """
+    メッセージを非同期で処理する
+    """
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         try:
@@ -536,6 +531,29 @@ def handle_message(event):
                 )
             except Exception as reply_error:
                 logger.error(f"エラーメッセージの送信にも失敗しました: {str(reply_error)}")
+
+@app.route("/callback", methods=['POST'])
+def callback():
+    # リクエストヘッダーからX-Line-Signatureを取得
+    signature = request.headers['X-Line-Signature']
+
+    # リクエストボディを取得
+    body = request.get_data(as_text=True)
+    app.logger.info("Request body: " + body)
+
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
+        abort(400)
+
+    return 'OK'
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_message(event):
+    # 非同期でメッセージを処理
+    thread = threading.Thread(target=process_message_async, args=(event,))
+    thread.start()
 
 if __name__ == "__main__":
     logger.info("アプリケーションを起動します")
