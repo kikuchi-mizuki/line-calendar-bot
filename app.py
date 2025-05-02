@@ -481,56 +481,55 @@ def process_message_async(event):
     """
     メッセージを非同期で処理する
     """
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        try:
-            # 受信メッセージのログ
-            logger.debug(f"受信メッセージ: {event.message.text}")
-            
-            # メッセージの解析
-            parsed_data = parse_message(event.message.text)
-            logger.debug(f"解析結果: {parsed_data}")
-            
-            if not parsed_data:
-                logger.error("メッセージの解析に失敗しました")
-                raise ValueError("メッセージの解析に失敗しました")
+    try:
+        # 受信メッセージのログ
+        logger.debug(f"受信メッセージ: {event.message.text}")
+        
+        # メッセージの解析
+        parsed_data = parse_message(event.message.text)
+        logger.debug(f"解析結果: {parsed_data}")
+        
+        if not parsed_data:
+            logger.error("メッセージの解析に失敗しました")
+            raise ValueError("メッセージの解析に失敗しました")
 
-            # カレンダー操作の処理
-            success, result = handle_calendar_operation(parsed_data.get('operation_type', 'read'), parsed_data)
-            logger.debug(f"カレンダー操作結果: success={success}, result={result}")
-            
-            # レスポンスメッセージの作成
-            response_message = format_response_message(
-                parsed_data.get('operation_type', 'read'),
-                success,
-                result
+        # カレンダー操作の処理
+        success, result = handle_calendar_operation(parsed_data.get('operation_type', 'read'), parsed_data)
+        logger.debug(f"カレンダー操作結果: success={success}, result={result}")
+        
+        # レスポンスメッセージの作成
+        response_message = format_response_message(
+            parsed_data.get('operation_type', 'read'),
+            success,
+            result
+        )
+        logger.debug(f"レスポンスメッセージ: {response_message}")
+        
+        # 処理結果を新しいメッセージとして送信
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.push_message(
+                to=event.source.user_id,
+                messages=[TextMessage(text=response_message)]
             )
-            logger.debug(f"レスポンスメッセージ: {response_message}")
-            
-            # メッセージの送信
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=response_message)]
+        
+    except Exception as e:
+        logger.error("エラーの詳細情報:")
+        logger.error(f"エラータイプ: {type(e).__name__}")
+        logger.error(f"エラーメッセージ: {str(e)}")
+        logger.error("スタックトレース:")
+        logger.error(traceback.format_exc())
+        
+        try:
+            # エラーメッセージを新しいメッセージとして送信
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.push_message(
+                    to=event.source.user_id,
+                    messages=[TextMessage(text="申し訳ありません。エラーが発生しました。\nエラー内容: " + str(e))]
                 )
-            )
-            
-        except Exception as e:
-            logger.error("エラーの詳細情報:")
-            logger.error(f"エラータイプ: {type(e).__name__}")
-            logger.error(f"エラーメッセージ: {str(e)}")
-            logger.error("スタックトレース:")
-            logger.error(traceback.format_exc())
-            
-            try:
-                line_bot_api.reply_message_with_http_info(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text="申し訳ありません。エラーが発生しました。\nエラー内容: " + str(e))]
-                    )
-                )
-            except Exception as reply_error:
-                logger.error(f"エラーメッセージの送信にも失敗しました: {str(reply_error)}")
+        except Exception as reply_error:
+            logger.error(f"エラーメッセージの送信にも失敗しました: {str(reply_error)}")
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -542,18 +541,39 @@ def callback():
     app.logger.info("Request body: " + body)
 
     try:
+        # 署名を検証
         handler.handle(body, signature)
     except InvalidSignatureError:
         app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
+    except Exception as e:
+        app.logger.error(f"Error handling webhook: {str(e)}")
+        app.logger.error(traceback.format_exc())
 
+    # 即座に200 OKを返す
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
-    # 非同期でメッセージを処理
-    thread = threading.Thread(target=process_message_async, args=(event,))
-    thread.start()
+    try:
+        # 即座に応答メッセージを送信
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="メッセージを受け付けました。処理を開始します。")]
+                )
+            )
+        
+        # 非同期でメッセージを処理
+        thread = threading.Thread(target=process_message_async, args=(event,))
+        thread.daemon = True  # メインスレッドが終了したら一緒に終了
+        thread.start()
+        
+    except Exception as e:
+        logger.error(f"Error in handle_message: {str(e)}")
+        logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
     logger.info("アプリケーションを起動します")
