@@ -1,1 +1,1 @@
-web: gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- --chdir=/opt/render/project/src app:app 
+web: gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- --chdir=/opt/render/project/src --pythonpath=/opt/render/project/src app:app 
