@@ -8,7 +8,7 @@ pytz
 spacy==3.7.4
 ja-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/ja_core_news_sm-3.7.0/ja_core_news_sm-3.7.0.tar.gz
 jaconv
-gunicorn
+gunicorn==21.2.0
 dateparser
 python-dotenv==1.0.1
 tenacity>=8.2.3
