@@ -52,7 +52,15 @@ JST = pytz.timezone('Asia/Tokyo')
 # Google Calendar APIの認証情報のパスを確認
 credentials_path = os.getenv('GOOGLE_CREDENTIALS_PATH')
 if not credentials_path:
-    raise ValueError("GOOGLE_CREDENTIALS_PATH環境変数が設定されていません。")
+    # 環境変数から直接認証情報を取得
+    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
+    if not credentials_json:
+        raise ValueError("GOOGLE_CREDENTIALS環境変数が設定されていません。")
+    # 一時ファイルとして認証情報を保存
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write(credentials_json)
+        credentials_path = f.name
 
 # CalendarManagerの初期化
 calendar_manager = CalendarManager(credentials_path)
@@ -655,91 +663,5 @@ def handle_exception(error):
     }), 500
 
 if __name__ == '__main__':
-    # 開発環境でのみFlaskの開発サーバーを使用
-    if os.getenv('FLASK_ENV') == 'development':
-        app.run(host='0.0.0.0', port=args.port, debug=True)
-    else:
-        # 本番環境ではGunicornを使用
-        from gunicorn.app.base import BaseApplication
-
-        class StandaloneApplication(BaseApplication):
-            def __init__(self, app, options=None):
-                self.options = options or {}
-                self.application = app
-                super().__init__()
-
-            def load_config(self):
-                for key, value in self.options.items():
-                    if key in self.cfg.settings and value is not None:
-                        self.cfg.set(key.lower(), value)
-
-            def load(self):
-                return self.application
-
-        options = {
-            'bind': f'0.0.0.0:{args.port}',
-            'workers': 1,
-            'timeout': 300,
-            'keepalive': 5,
-            'worker_class': 'sync',
-            'max_requests': 1000,
-            'max_requests_jitter': 50,
-            'accesslog': 'access.log',
-            'errorlog': 'error.log',
-            'loglevel': 'debug',
-            'capture_output': True,
-            'preload_app': True,
-            'proxy_protocol': True,
-            'proxy_allow_ips': '*',
-            'forwarded_allow_ips': '*',
-            'worker_connections': 1000,
-            'graceful_timeout': 30,
-            'limit_request_line': 4094,
-            'limit_request_fields': 100,
-            'limit_request_field_size': 8190,
-            'reload': False,
-            'daemon': False,
-            'pidfile': None,
-            'umask': 0o007,
-            'user': None,
-            'group': None,
-            'tmp_upload_dir': None,
-            'worker_tmp_dir': None,
-            'worker_class': 'sync',
-            'worker_connections': 1000,
-            'backlog': 2048,
-            'limit_request_line': 4094,
-            'limit_request_fields': 100,
-            'limit_request_field_size': 8190,
-            'max_requests': 1000,
-            'max_requests_jitter': 50,
-            'timeout': 300,
-            'graceful_timeout': 30,
-            'keepalive': 5,
-            'spew': False,
-            'check_config': True,
-            'preload_app': True,
-            'reload': False,
-            'daemon': False,
-            'pidfile': None,
-            'umask': 0o007,
-            'user': None,
-            'group': None,
-            'tmp_upload_dir': None,
-            'worker_tmp_dir': None,
-            'worker_class': 'sync',
-            'worker_connections': 1000,
-            'backlog': 2048,
-            'limit_request_line': 4094,
-            'limit_request_fields': 100,
-            'limit_request_field_size': 8190,
-            'max_requests': 1000,
-            'max_requests_jitter': 50,
-            'timeout': 300,
-            'graceful_timeout': 30,
-            'keepalive': 5,
-            'spew': False,
-            'check_config': True
-        }
-
-        StandaloneApplication(app, options).run() 
+    port = int(os.environ.get('PORT', 3001))
+    app.run(host='0.0.0.0', port=port) 
