@@ -3,7 +3,7 @@ services:
     name: line-calendar-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- --chdir=/opt/render/project/src --pythonpath=/opt/render/project/src app:app
+    startCommand: cd /opt/render/project/src && python -m gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.18
@@ -12,4 +12,6 @@ services:
       - key: PYTHONPATH
         value: /opt/render/project/src
       - key: FLASK_APP
-        value: app.py 
+        value: app.py
+      - key: FLASK_ENV
+        value: production 
