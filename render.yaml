@@ -3,7 +3,7 @@ services:
     name: line-calendar-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: cd /opt/render/project/src && python -m gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- app:app
+    startCommand: cd /opt/render/project/src && python -m gunicorn.app.wsgiapp --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.18

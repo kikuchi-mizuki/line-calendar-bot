@@ -1,1 +1,1 @@
-web: cd /opt/render/project/src && python -m gunicorn --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- app:app 
+web: cd /opt/render/project/src && python -m gunicorn.app.wsgiapp --bind 0.0.0.0:$PORT --workers=1 --timeout=300 --access-logfile=- --error-logfile=- app:app 
