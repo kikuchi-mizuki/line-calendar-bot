@@ -1,0 +1,13 @@
+/Users/kikuchimizuki/Desktop/LINEでカレンダー/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+2025-05-03 06:02:11,027 - __main__ - INFO - アプリケーションを起動します
+2025-05-03 06:02:11,027 - __main__ - INFO - 環境変数 LINE_CHANNEL_ACCESS_TOKEN: 設定済み
+2025-05-03 06:02:11,027 - __main__ - INFO - 環境変数 LINE_CHANNEL_SECRET: 設定済み
+2025-05-03 06:02:11,027 - __main__ - INFO - 環境変数 GOOGLE_CREDENTIALS: 設定済み
+2025-05-03 06:02:11,029 - googleapiclient.discovery_cache - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-05-03 06:02:11,030 - calendar_chat - INFO - Google Calendar APIサービスが正常に初期化されました
+2025-05-03 06:02:11,153 - __main__ - INFO - アプリケーションを起動します
+ * Serving Flask app 'app'
+ * Debug mode: off
+Address already in use
+Port 5051 is in use by another program. Either identify and stop that program, or start the server with a different port.

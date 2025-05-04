@@ -7,6 +7,7 @@
 import re
 import logging
 from typing import Optional, Tuple
+import traceback
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
@@ -16,15 +17,18 @@ class TitleExtractor:
     
     def __init__(self):
         """初期化"""
-        # タイトル抽出のパターン
-        self.title_patterns = [
-            r"「([^」]+)」",  # 「」で囲まれたテキスト
-            r"『([^』]+)』",  # 『』で囲まれたテキスト
-            r"【([^】]+)】",  # 【】で囲まれたテキスト
-            r"\[([^\]]+)\]",  # []で囲まれたテキスト
-            r"（([^）]+)）",   # （）で囲まれたテキスト
-            r"\(([^)]+)\)",   # ()で囲まれたテキスト
+        # 時間表現を一時的なマーカーに置き換えるためのパターン
+        self.time_patterns = [
+            r'\d{1,2}時(?:\d{1,2}分)?(?:から|まで)?',
+            r'午前|午後|朝|昼|夕方|夜',
+            r'\d{1,2}:\d{2}',
         ]
+        
+        # 助詞のパターン
+        self.particles = 'で|に|へ|から|まで|と|の|は|が|を'
+        
+        # 場所を示す可能性のある語句
+        self.location_indicators = 'で|にて|において|会場は|場所は'
         
         # 除外するキーワード
         self.exclude_keywords = [
@@ -33,7 +37,45 @@ class TitleExtractor:
             "追加", "削除", "変更", "確認", "教えて", "表示"
         ]
     
-    def extract(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    def extract(self, text: str) -> str:
+        """
+        テキストからタイトルを抽出する
+        
+        Args:
+            text (str): 入力テキスト
+            
+        Returns:
+            str: 抽出されたタイトル
+        """
+        try:
+            # 時間表現を除去
+            processed_text = re.sub(r'\d{1,2}月\d{1,2}日', '', text)
+            processed_text = re.sub(r'\d{1,2}時(?:\d{1,2}分)?', '', processed_text)
+            
+            # 参加者情報を除去
+            processed_text = re.sub(r'参加者は.*?(?:と|、|。|$)', '', processed_text)
+            
+            # 操作タイプのキーワードを除去
+            processed_text = re.sub(r'追加|削除|変更|確認|して|ください|お願い', '', processed_text)
+            
+            # 余分な空白と句読点を除去
+            title = re.sub(r'\s+', ' ', processed_text).strip()
+            title = re.sub(r'[、。]', '', title)
+            
+            # タイトルが空の場合はデフォルト値を返す
+            if not title:
+                return "予定"
+            
+            # タイトルが短すぎる場合はデフォルト値を返す
+            if len(title) < 2:
+                return "予定"
+            
+            return title
+        except Exception as e:
+            logger.error(f"タイトルの抽出中にエラーが発生: {str(e)}")
+            return "予定"
+
+    def extract_with_location(self, message: str) -> Tuple[Optional[str], Optional[str]]:
         """
         メッセージからタイトルと場所を抽出する
         
@@ -46,65 +88,45 @@ class TitleExtractor:
         try:
             logger.info(f"タイトルを抽出: {message}")
             
-            # 括弧で囲まれたテキストを抽出
+            # 時間表現を一時的なマーカーに置き換え
+            processed_text = message
+            for pattern in self.time_patterns:
+                processed_text = re.sub(pattern, 'TIME_MARKER', processed_text)
+            
+            # タイトルの抽出パターン
+            title_patterns = [
+                # "〇〇の打ち合わせ"
+                r'(.+?)(?:の)?(?:打ち?合わせ|ミーティング|会議)',
+                # "〇〇さんと打ち合わせ"
+                r'(.+?)(?:さん|君|様|氏)と(?:の)?(?:打ち?合わせ|ミーティング|会議)',
+                # 一般的なパターン
+                r'(.+?)(?:' + self.particles + r')',
+            ]
+            
             title = None
-            for pattern in self.title_patterns:
-                match = re.search(pattern, message)
+            for pattern in title_patterns:
+                match = re.search(pattern, processed_text)
                 if match:
                     title = match.group(1).strip()
-                    if title:  # 空でないことを確認
-                        logger.info(f"抽出されたタイトル: {title}")
+                    # TIME_MARKERが含まれている場合は除外
+                    if 'TIME_MARKER' not in title:
                         break
-            
-            # 括弧で囲まれていない場合、日時情報の前後のテキストを確認
-            if not title:
-                # 日時情報を除去
-                message_without_datetime = re.sub(
-                    r'\d+月\d+日|\d+時\d+分|\d+時|今日|明日|明後日|来週\w+曜日|今週\w+曜日',
-                    '', message
-                )
-                message_without_datetime = re.sub(r'午前|午後|\d+日後', '', message_without_datetime)
-                
-                # コマンドを除去
-                message_without_commands = message_without_datetime
-                for keyword in self.exclude_keywords:
-                    message_without_commands = re.sub(keyword, '', message_without_commands)
-                
-                # 助詞を除去（「から」の前の時刻を保持）
-                message_without_particles = re.sub(
-                    r'(?<!\d+時)から|まで|で|に|へ|と|は|が|を|の|も|や|か|ね|よ|な|わ|ぞ|ぜ|だ|です|ます|けど|ので|のに|ば|たら|なら|て',
-                    '', message_without_commands
-                )
-                
-                # 残りのテキストをトリム
-                title = message_without_particles.strip()
-                if title:
-                    logger.info(f"抽出されたタイトル: {title}")
             
             # 場所の抽出
             location = None
-            location_patterns = [
-                r"@([^@\s]+)",  # @渋谷
-                r"＠([^＠\s]+)",  # ＠渋谷
-                r"で([^で\s]+)(?:で|に|へ|と|は|が|を|$)",  # 渋谷で
-                r"にて([^にて\s]+)(?:で|に|へ|と|は|が|を|$)",  # 渋谷にて
-                r"場所[：:]\s*([^\n]+)",  # 場所: 渋谷
-                r"会場[：:]\s*([^\n]+)",  # 会場: 渋谷
-                r"場所は([^\n]+)",  # 場所は渋谷
-                r"会場は([^\n]+)",  # 会場は渋谷
-            ]
+            location_pattern = f'(?:{self.location_indicators})([^{self.particles}]+)'
+            location_match = re.search(location_pattern, processed_text)
+            if location_match:
+                location = location_match.group(1).strip()
             
-            for pattern in location_patterns:
-                match = re.search(pattern, message)
-                if match:
-                    location = match.group(1).strip()
-                    if location:  # 空でないことを確認
-                        logger.info(f"抽出された場所: {location}")
-                        break
-            
+            # タイトルが見つからない場合は人名を探す
             if not title:
-                logger.warning("タイトルを抽出できませんでした")
-                return None, location
+                person_match = re.search(r'([^\s]+?)(?:さん|君|様|氏)と', message)
+                if person_match:
+                    person = person_match.group(1)
+                    title = f"{person}さんと打合せ"
+                else:
+                    title = "予定"
             
             return title, location
             

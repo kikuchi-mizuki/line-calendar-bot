@@ -1,12 +1,15 @@
-flask
+flask==3.0.2
 line-bot-sdk
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 python-dateutil
 pytz
-spacy
+spacy==3.7.4
 ja-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/ja_core_news_sm-3.7.0/ja_core_news_sm-3.7.0.tar.gz
 jaconv
 gunicorn
-dateparser 
+dateparser
+python-dotenv==1.0.1
+tenacity>=8.2.3
+urllib3<2.0.0 

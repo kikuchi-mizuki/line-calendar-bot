@@ -8,3 +8,6 @@ credentials.json
 service-account.json
 test_credentials.json
 .DS_Store 
+LINE_CHANNEL_ACCESS_TOKEN=Kjv0ZfZ+FSWSd+in88GASwgV/P4RmOvbISgAcp0je5wk0eR5eGsVN3pZJW4LzBh34Me+qyrH34UCzYx0gXnWPXqFG4Kowk9V8KJRq9WDw6nAKE9XzLuezDc6HK0ekz5wuQqiqKX2eDPEWgxwDsyNZwdB04t89/1O/w1cDnyilFU=
+LINE_CHANNEL_SECRET=881919a866b7181a34bd9a131ce36da7
+GOOGLE_CREDENTIALS={"type": "service_account", "project_id": "your-project-id", ...}

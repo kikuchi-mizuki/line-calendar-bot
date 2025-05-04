@@ -28,117 +28,76 @@ logger = logging.getLogger(__name__)
 
 def get_credentials():
     """環境変数から認証情報を取得し、一時ファイルとして保存する"""
-    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
-    if not credentials_json:
-        raise ValueError("GOOGLE_CREDENTIALS環境変数が設定されていません")
-    
     try:
-        # JSONの形式を確認
-        json.loads(credentials_json)
-    except json.JSONDecodeError:
-        raise ValueError("GOOGLE_CREDENTIALSの形式が正しくありません")
-    
-    # 一時ファイルとして保存
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-        temp_file.write(credentials_json)
-        return temp_file.name
+        # 直接credentials.jsonを使用
+        credentials_file = 'credentials.json'
+        if not os.path.exists(credentials_file):
+            raise ValueError("credentials.jsonファイルが見つかりません")
+        return credentials_file
+    except Exception as e:
+        logger.error(f"認証情報の取得に失敗: {str(e)}")
+        raise ValueError("認証情報の取得に失敗しました")
 
 class CalendarChat:
-    def __init__(self):
-        """初期化"""
-        self.SCOPES = ['https://www.googleapis.com/auth/calendar']
-        self.creds = None
+    def __init__(self, credentials_path: str, calendar_id: str):
+        """
+        初期化
+        
+        Args:
+            credentials_path (str): サービスアカウントの認証情報ファイルのパス
+            calendar_id (str): 操作対象のカレンダーID
+        """
+        self.credentials_path = credentials_path
+        self.calendar_id = calendar_id
         self.service = None
         self.timezone = pytz.timezone('Asia/Tokyo')
-        self.credentials_file = None
         self.initialize_service()
 
     def initialize_service(self):
         """Google Calendar APIのサービスを初期化する"""
         try:
-            # 環境変数から認証情報を取得
+            # 認証情報の取得
             self.credentials_file = get_credentials()
-            logger.info("認証情報を一時ファイルとして保存しました")
-
-            # サービスアカウントの認証情報を使用してサービスを初期化
+            
+            # サービスアカウントの認証情報を作成
             self.creds = service_account.Credentials.from_service_account_file(
                 self.credentials_file,
-                scopes=self.SCOPES
+                scopes=['https://www.googleapis.com/auth/calendar']
             )
             
-            # サービスを構築
-            logger.info("Google Calendar APIサービスを初期化します")
+            # Google Calendar APIサービスの初期化
             self.service = build('calendar', 'v3', credentials=self.creds)
-            logger.info("Google Calendar API service initialized successfully")
+            logger.info("Google Calendar APIサービスが正常に初期化されました")
             
         except Exception as e:
-            logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
+            logger.error(f"サービスの初期化に失敗: {str(e)}")
             logger.error("詳細なエラー情報:", exc_info=True)
             raise
-        finally:
-            # 一時ファイルを削除
-            if self.credentials_file and os.path.exists(self.credentials_file):
-                try:
-                    os.unlink(self.credentials_file)
-                    logger.info("一時ファイルを削除しました")
-                except Exception as e:
-                    logger.warning(f"一時ファイルの削除に失敗: {str(e)}")
 
     def get_events(self, time_min: datetime = None, time_max: datetime = None) -> list:
         """Get calendar events for the specified time range."""
         try:
-            # サービスの初期化を確認
             if not self.service:
                 logger.error("Google Calendar APIサービスが初期化されていません")
                 return []
 
-            # デフォルト値の設定
-            if time_min is None:
-                time_min = datetime.now(self.timezone).replace(hour=0, minute=0, second=0, microsecond=0)
-            if time_max is None:
-                time_max = time_min.replace(hour=23, minute=59, second=59)
-
             # タイムゾーンの設定
-            if time_min.tzinfo is None:
+            if time_min and time_min.tzinfo is None:
                 time_min = self.timezone.localize(time_min)
-            if time_max.tzinfo is None:
+            if time_max and time_max.tzinfo is None:
                 time_max = self.timezone.localize(time_max)
 
-            logger.info(f"イベント取得開始 - 検索範囲: {time_min.isoformat()} 〜 {time_max.isoformat()}")
+            # 予定を取得
+            events_result = self.service.events().list(
+                calendarId='mmms.dy.23@gmail.com',
+                timeMin=time_min.isoformat() if time_min else None,
+                timeMax=time_max.isoformat() if time_max else None,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
 
-            try:
-                events_result = self.service.events().list(
-                    calendarId='primary',
-                    timeMin=time_min.isoformat(),
-                    timeMax=time_max.isoformat(),
-                    singleEvents=True,
-                    orderBy='startTime',
-                    timeZone='Asia/Tokyo'
-                ).execute()
-            except Exception as api_error:
-                logger.error(f"Google Calendar API呼び出しエラー: {str(api_error)}")
-                logger.error("詳細なエラー情報:", exc_info=True)
-                return []
-
-            if not isinstance(events_result, dict):
-                logger.error(f"予期しない形式のレスポンス: {type(events_result)}")
-                return []
-
-            events = events_result.get('items', [])
-            if not isinstance(events, list):
-                logger.error(f"予期しない形式のイベントリスト: {type(events)}")
-                return []
-
-            logger.info(f"取得したイベント数: {len(events)}")
-
-            # イベントの詳細をログに出力
-            for event in events:
-                if not isinstance(event, dict):
-                    logger.error(f"予期しない形式のイベント: {type(event)}")
-                    continue
-                logger.debug(f"イベント: {event.get('summary')} - {event.get('start')} 〜 {event.get('end')}")
-
-            return events
+            logger.info(f"予定を取得しました: {len(events_result.get('items', []))}件")
+            return events_result.get('items', [])
 
         except Exception as e:
             logger.error(f"イベント取得中にエラーが発生: {str(e)}")
@@ -255,7 +214,7 @@ class CalendarChat:
             
             # 予定を取得
             events_result = self.service.events().list(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 timeMin=start_time.isoformat(),
                 timeMax=end_time.isoformat(),
                 singleEvents=True,
@@ -321,7 +280,7 @@ class CalendarChat:
                 event_id = event['id']
                 try:
                     self.service.events().delete(
-                        calendarId='primary',
+                        calendarId='mmms.dy.23@gmail.com',
                         eventId=event_id
                     ).execute()
                     logger.info(f"予定を削除しました: {event.get('summary')} ({event.get('start')} - {event.get('end')})")
@@ -357,7 +316,7 @@ class CalendarChat:
                 end_time = self.timezone.localize(end_time)
             
             # 予定の詳細を取得
-            event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+            event = self.service.events().get(calendarId='mmms.dy.23@gmail.com', eventId=event_id).execute()
             
             # 更新する情報を設定
             event['start'] = {
@@ -377,7 +336,7 @@ class CalendarChat:
             
             # 予定を更新
             updated_event = self.service.events().update(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 eventId=event_id,
                 body=event
             ).execute()
@@ -409,8 +368,15 @@ class CalendarChat:
         """
         try:
             # タイムゾーンを設定
-            start_time = self.timezone.localize(start_time)
-            end_time = self.timezone.localize(end_time)
+            if start_time.tzinfo is None:
+                start_time = self.timezone.localize(start_time)
+            else:
+                start_time = start_time.astimezone(self.timezone)
+                
+            if end_time.tzinfo is None:
+                end_time = self.timezone.localize(end_time)
+            else:
+                end_time = end_time.astimezone(self.timezone)
             
             # 予定の詳細を構築
             event = {
@@ -435,7 +401,7 @@ class CalendarChat:
             
             # 予定を作成
             created_event = self.service.events().insert(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 body=event
             ).execute()
             
@@ -471,7 +437,7 @@ class CalendarChat:
             
             # 予定を取得
             events_result = self.service.events().list(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 timeMin=time_min.isoformat(),
                 timeMax=time_max.isoformat(),
                 singleEvents=True,
@@ -552,7 +518,7 @@ class CalendarChat:
                 logger.info(f"With title keyword: {title_keyword}")
             
             events_result = self.service.events().list(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 timeMin=search_start.isoformat(),
                 timeMax=search_end.isoformat(),
                 singleEvents=True,
@@ -641,7 +607,7 @@ class CalendarChat:
             
             # 予定の重複をチェック（自分自身は除外）
             events_result = self.service.events().list(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 timeMin=new_start_time.isoformat(),
                 timeMax=new_end_time.isoformat(),
                 singleEvents=True,
@@ -685,7 +651,7 @@ class CalendarChat:
             event_body['end']['dateTime'] = new_end_time.isoformat()
             
             updated_event = self.service.events().update(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 eventId=target_event['id'],
                 body=event_body
             ).execute()
@@ -742,7 +708,7 @@ class CalendarChat:
             search_end = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
             
             events_result = self.service.events().list(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 timeMin=search_start.isoformat(),
                 timeMax=search_end.isoformat(),
                 singleEvents=True,
@@ -788,7 +754,7 @@ class CalendarChat:
             # 予定を更新
             target_event['end']['dateTime'] = new_end_time.isoformat()
             self.service.events().update(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 eventId=target_event['id'],
                 body=target_event
             ).execute()
@@ -801,25 +767,50 @@ class CalendarChat:
             logger.error("Full error details:", exc_info=True)
             return False, "予定の時間変更中にエラーが発生しました。"
 
-    def add_event(self, start_time: datetime, end_time: datetime, title: str, 
-                 location: Optional[str] = None, person: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def add_event(self, start_time: datetime, end_time: datetime, title: str = None, location: str = None) -> Dict[str, Any]:
         """
-        イベントを追加する
+        予定を追加する（改善版）
         
         Args:
-            start_time (datetime): 開始時間
-            end_time (datetime): 終了時間
-            title (str): タイトル
-            location (Optional[str]): 場所
-            person (Optional[str]): 人物
+            start_time (datetime): 開始時刻
+            end_time (datetime): 終了時刻
+            title (str, optional): タイトル
+            location (str, optional): 場所
             
         Returns:
-            Optional[Dict[str, Any]]: 追加されたイベントの情報
+            Dict[str, Any]: 追加された予定の情報
         """
         try:
-            # イベントの作成
+            # タイムゾーンの設定
+            if start_time.tzinfo is None:
+                start_time = self.timezone.localize(start_time)
+            else:
+                start_time = start_time.astimezone(self.timezone)
+                
+            if end_time.tzinfo is None:
+                end_time = self.timezone.localize(end_time)
+            else:
+                end_time = end_time.astimezone(self.timezone)
+
+            # 重複する予定を削除
+            overlapping_events = self.check_overlapping_events(start_time, end_time)
+            if overlapping_events:
+                logger.info(f"{len(overlapping_events)}件の重複する予定を削除します")
+                for event in overlapping_events:
+                    try:
+                        self.service.events().delete(
+                            calendarId='mmms.dy.23@gmail.com',
+                            eventId=event['id']
+                        ).execute()
+                        logger.info(f"予定を削除しました: {event.get('summary', '予定なし')}")
+                    except Exception as e:
+                        logger.error(f"予定の削除中にエラーが発生: {str(e)}")
+                        continue
+
+            # 新しい予定を追加
             event = {
-                'summary': title,
+                'summary': title if title else '予定',
+                'location': location if location else '',
                 'start': {
                     'dateTime': start_time.isoformat(),
                     'timeZone': 'Asia/Tokyo',
@@ -829,26 +820,22 @@ class CalendarChat:
                     'timeZone': 'Asia/Tokyo',
                 },
             }
-            
-            # 場所が指定されている場合、追加
-            if location:
-                event['location'] = location
-            
-            # 人物が指定されている場合、説明として追加
-            if person:
-                event['description'] = f"参加者: {person}"
-            
-            # イベントを追加
-            event = self.service.events().insert(
-                calendarId='primary',
+
+            # 予定を追加
+            created_event = self.service.events().insert(
+                calendarId='mmms.dy.23@gmail.com',
                 body=event
             ).execute()
-            
-            logger.info(f"イベントを追加しました: {event.get('htmlLink')}")
-            return event
-            
+
+            # 追加した予定の情報をログに記録
+            logger.info(f"予定を追加しました: {created_event.get('summary', '予定なし')}")
+            logger.info(f"開始時刻: {start_time.isoformat()}")
+            logger.info(f"終了時刻: {end_time.isoformat()}")
+
+            return created_event
+
         except Exception as e:
-            logger.error(f"イベントの追加中にエラーが発生しました: {str(e)}")
+            logger.error(f"予定の追加中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return None
 
@@ -935,7 +922,7 @@ class CalendarChat:
 
     def format_calendar_response(self, events: list, start_time: datetime, end_time: datetime) -> str:
         """
-        カレンダーのレスポンスを整形する（改善版）
+        カレンダーのレスポンスを整形する
         
         Args:
             events (list): 予定のリスト
@@ -980,13 +967,17 @@ class CalendarChat:
                 )
                 if event.get('location'):
                     message += f"  📍 {event['location']}\n"
+                if event.get('description'):
+                    message += f"  👥 {event['description']}\n"
                 message += "\n"
         
         # 空き時間情報を追加
         free_slots = self.get_free_time_slots(start_time)
-        message += "\n" + self.format_free_time_slots(free_slots)
+        if free_slots:
+            message += "\n空いている時間帯はこちらです👇\n"
+            message += self.format_free_time_slots(free_slots)
         
-        message += "\n予定の追加、変更、削除が必要な場合は、お気軽にお申し付けください。"
+        message += "\n予定の追加、変更、削除が必要な場合は、お気軽にお申し付けくださいね！"
         return message
 
     def check_overlapping_events(self, start_time: datetime, end_time: datetime) -> List[Dict]:
@@ -998,7 +989,7 @@ class CalendarChat:
             end_time (datetime): 終了時刻
             
         Returns:
-            List[Dict]: 重複する予定のリスト
+            List[Dict]: 重複する予定のリスト（id, summary, start, end, location, description）
         """
         try:
             # タイムゾーンの設定
@@ -1023,6 +1014,7 @@ class CalendarChat:
                 # 時間が重複しているかチェック
                 if (event_start < end_time and event_end > start_time):
                     overlapping_events.append({
+                        'id': event['id'],  # イベントIDを追加
                         'summary': event.get('summary', '予定なし'),
                         'start': event_start,
                         'end': event_end,

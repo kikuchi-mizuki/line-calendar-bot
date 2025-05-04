@@ -17,7 +17,7 @@ class CalendarManager:
         """
         try:
             # イベントを取得
-            event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+            event = self.service.events().get(calendarId='mmms.dy.23@gmail.com', eventId=event_id).execute()
             
             # 新しい開始時刻が指定されている場合
             if 'new_start_time' in datetime_info:
@@ -36,7 +36,7 @@ class CalendarManager:
             
             # イベントを更新
             updated_event = self.service.events().update(
-                calendarId='primary',
+                calendarId='mmms.dy.23@gmail.com',
                 eventId=event_id,
                 body=event
             ).execute()

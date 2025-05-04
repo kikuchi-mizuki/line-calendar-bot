@@ -1,615 +1,745 @@
-from flask import Flask, request, abort, jsonify
-from linebot.v3.messaging import (
-    Configuration,
-    ApiClient,
-    MessagingApi,
-    ReplyMessageRequest,
-    TextMessage,
-    PushMessageRequest
-)
-from linebot.v3.webhook import WebhookHandler
-from linebot.v3.webhooks import (
-    MessageEvent,
-    TextMessageContent
-)
+from flask import Flask, request, abort, session, jsonify, render_template
+from linebot.v3 import WebhookHandler
+from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest
 from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.messaging import TextMessage
 import os
 import logging
 import traceback
 from datetime import datetime, timedelta, timezone
 import pytz
-from message_parser import (
-    parse_message,
-    extract_title,
-    extract_location,
-    extract_person
-)
-from calendar_chat import CalendarChat
-from typing import Dict, Tuple, Any, Optional
-import spacy
-import threading
+import json
+import asyncio
+import argparse
+from functools import wraps
+from message_parser import parse_message
+from calendar_operations import CalendarManager
+from database import DatabaseManager
+from typing import List, Dict
+import warnings
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
+import signal
+from contextlib import contextmanager
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-app = Flask(__name__)
+# 警告の抑制
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
+logging.getLogger('urllib3').setLevel(logging.ERROR)
+logging.getLogger('linebot').setLevel(logging.ERROR)
 
-# ロギングの設定をより詳細に
+# コマンドライン引数の設定
+parser = argparse.ArgumentParser()
+parser.add_argument('--port', type=int, default=3001, help='ポート番号')
+args = parser.parse_args()
+
+# ログ設定
 logging.basicConfig(
-    level=logging.DEBUG,  # INFOからDEBUGに変更してより詳細なログを取得
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s\n    %(pathname)s:%(lineno)d',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),  # 標準出力
-        logging.FileHandler('app.log', encoding='utf-8')  # ファイル出力を追加
+        logging.StreamHandler(),
+        logging.FileHandler('app.log', encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
 
-# アプリケーション起動時のログ
-logger.info("アプリケーションを起動します")
-logger.info(f"環境変数 LINE_CHANNEL_ACCESS_TOKEN: {'設定済み' if os.getenv('LINE_CHANNEL_ACCESS_TOKEN') else '未設定'}")
-logger.info(f"環境変数 LINE_CHANNEL_SECRET: {'設定済み' if os.getenv('LINE_CHANNEL_SECRET') else '未設定'}")
-logger.info(f"環境変数 GOOGLE_CREDENTIALS: {'設定済み' if os.getenv('GOOGLE_CREDENTIALS') else '未設定'}")
-
-# LINE APIの設定
-configuration = Configuration(access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
-handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
-
-# LINE Messaging APIクライアントの初期化
-line_bot_api = MessagingApi(ApiClient(configuration))
-
-# カレンダー操作クラスのインスタンス化
-calendar_chat = CalendarChat()
-
 # タイムゾーンの設定
 JST = pytz.timezone('Asia/Tokyo')
 
-# spaCyモデルの初期化
-nlp = spacy.load("ja_core_news_sm")
+# Google Calendar APIの認証情報のパスを確認
+credentials_path = os.getenv('GOOGLE_CREDENTIALS_PATH')
+if not credentials_path:
+    raise ValueError("GOOGLE_CREDENTIALS_PATH環境変数が設定されていません。")
 
-def format_response_message(operation_type: str, success: bool, data: Dict[str, Any] = None) -> str:
+# CalendarManagerの初期化
+calendar_manager = CalendarManager(credentials_path)
+
+app = Flask(__name__)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your-secret-key-here')
+
+# プロキシ設定
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=1,
+    x_proto=1,
+    x_host=1,
+    x_port=1,
+    x_prefix=1
+)
+
+# LINE Bot SDKの初期化
+configuration = Configuration(
+    access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+)
+api_client = ApiClient(configuration)
+messaging_api = MessagingApi(api_client)
+handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
+
+db_manager = DatabaseManager()
+
+# タイムアウト設定
+TIMEOUT_SECONDS = 30  # タイムアウトを30秒に延長
+
+@contextmanager
+def timeout(seconds):
+    def signal_handler(signum, frame):
+        raise TimeoutError(f"処理が{seconds}秒でタイムアウトしました")
+    
+    # SIGALRMハンドラーを設定する前に現在のハンドラーを保存
+    original_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, signal_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        # 元のハンドラーを復元
+        signal.signal(signal.SIGALRM, original_handler)
+
+# リトライ設定
+MAX_RETRIES = 5
+RETRY_DELAY = 2
+RETRY_BACKOFF = 1.5
+
+def retry_on_error(func):
+    """
+    エラー発生時にリトライするデコレータ
+    """
+    @retry(
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_DELAY, exp_base=RETRY_BACKOFF),
+        reraise=True,
+        before_sleep=lambda retry_state: logger.warning(
+            f"Retrying {func.__name__} after {retry_state.attempt_number} attempts"
+        )
+    )
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+    return wrapper
+
+def require_auth(f):
+    """
+    ユーザー認証を要求するデコレータ
+    
+    Args:
+        f: デコレートする関数
+        
+    Returns:
+        デコレートされた関数
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user_id = request.args.get('user_id')
+        if not user_id or not db_manager.is_authorized(user_id):
+            logger.warning(f"未認証ユーザーからのアクセス: {user_id}")
+            return "認証が必要です。", 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def format_error_message(error: Exception, context: str = "") -> str:
+    """
+    エラーメッセージを整形する
+    
+    Args:
+        error (Exception): エラーオブジェクト
+        context (str): エラーのコンテキスト
+        
+    Returns:
+        str: 整形されたエラーメッセージ
+    """
+    error_type = type(error).__name__
+    error_message = str(error)
+    
+    if isinstance(error, InvalidSignatureError):
+        return "署名の検証に失敗しました。不正なリクエストの可能性があります。"
+    elif isinstance(error, ValueError):
+        return f"入力値が不正です: {error_message}"
+    elif isinstance(error, KeyError):
+        return f"必要な情報が不足しています: {error_message}"
+    else:
+        return f"エラーが発生しました: {error_message}\n\n詳細: {context}"
+
+def format_datetime(dt: datetime) -> str:
+    """
+    日時をフォーマットする
+    
+    Args:
+        dt (datetime): フォーマットする日時
+        
+    Returns:
+        str: フォーマットされた日時文字列
+    """
+    try:
+        # タイムゾーンを日本時間に設定
+        if dt.tzinfo is None:
+            dt = JST.localize(dt)
+        else:
+            dt = dt.astimezone(JST)
+            
+        # 日時のフォーマット
+        return dt.strftime('%Y年%m月%d日 %H:%M')
+    except Exception as e:
+        logger.error(f"日時のフォーマット中にエラーが発生: {str(e)}")
+        return ""
+
+def format_response_message(result: dict) -> str:
     """
     レスポンスメッセージをフォーマットする
     
     Args:
-        operation_type (str): 操作タイプ
-        success (bool): 成功したかどうか
-        data (Dict[str, Any], optional): レスポンスデータ
+        result (dict): 操作結果
         
     Returns:
         str: フォーマットされたメッセージ
     """
-    if not data:
-        return "申し訳ありません。エラーが発生しました。"
-
-    if not success:
-        return data.get('message', 'エラーが発生しました。')
-
-    if operation_type == 'read':
-        events = data.get('events', [])
-        if not events:
-            return "📅 指定された期間に予定はありません。"
-
-        response = "📅 予定一覧:\n\n"
-        current_date = None
-
-        for event in events:
-            start_time = event['start_time']
-            end_time = event['end_time']
+    try:
+        operation_type = result.get('operation_type')
+        
+        # 予定の追加
+        if operation_type == 'add':
+            if not result.get('success', True):
+                overlapping_events = result.get('overlapping_events', [])
+                if overlapping_events:
+                    message = "⚠️ 以下の予定と重複しています：\n\n"
+                    for event in overlapping_events:
+                        message += f"・{event['start']}〜{event['end']} {event['summary']}\n"
+                        if event.get('location'):
+                            message += f"  📍 {event['location']}\n"
+                        if event.get('description'):
+                            message += f"  👥 {event['description']}\n"
+                        message += "\n"
+                    message += "別の時間を指定してくださいね！"
+                    return message
+                return "予定の追加に失敗しました。もう一度お試しください。"
             
-            # 日付が変わったら日付を表示
-            event_date = start_time.date()
-            if current_date != event_date:
-                current_date = event_date
-                response += f"■ {current_date.strftime('%Y年%m月%d日')}（{['月', '火', '水', '木', '金', '土', '日'][current_date.weekday()]}）\n"
-
-            # イベントの詳細を追加
-            response += f"• {event['title']}\n"
-            response += f"  ⏰ {start_time.strftime('%H:%M')} 〜 {end_time.strftime('%H:%M')}\n"
-            
+            event = result.get('event', {})
+            message = "予定を登録しました！\n\n"
+            message += f"🗓 {format_datetime(datetime.fromisoformat(event.get('start', {}).get('dateTime', '')))}\n"
+            message += f"📌 {event.get('summary', '予定')}\n"
             if event.get('location'):
-                response += f"  📍 {event['location']}\n"
+                message += f"📍 {event['location']}\n"
             if event.get('description'):
-                response += f"  📝 {event['description']}\n"
+                message += f"👥 {event['description']}\n"
+            message += "\n何か変更があれば、また教えてくださいね！"
+            return message
             
-            response += "\n"
-
-        return response.strip()
-
-    elif operation_type == 'add':
-        if data.get('event'):
-            event = data['event']
-            response = "✅ 予定を追加しました！\n\n"
-            response += f"📅 タイトル: {event.get('summary', '予定なし')}\n"
+        # 予定の削除
+        elif operation_type == 'delete':
+            if not result.get('success', True):
+                return "予定の削除に失敗しました。もう一度お試しください。"
+            
+            event = result.get('event', {})
+            if not event:
+                return "予定を削除しました。\n\nまた必要になったら、いつでも追加してくださいね！"
             
             start_time = event.get('start', {}).get('dateTime')
-            end_time = event.get('end', {}).get('dateTime')
-            
-            if start_time:
-                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00')).astimezone(JST)
-                response += f"⏰ 開始: {start_dt.strftime('%Y年%m月%d日 %H:%M')}\n"
-            if end_time:
-                end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00')).astimezone(JST)
-                response += f"⌛️ 終了: {end_dt.strftime('%Y年%m月%d日 %H:%M')}\n"
-            
+            if not start_time:
+                return "予定を削除しました。\n\nまた必要になったら、いつでも追加してくださいね！"
+                
+            message = "以下の予定を削除しました。\n\n"
+            message += f"🗓 {format_datetime(datetime.fromisoformat(start_time))}\n"
+            message += f"📌 {event.get('summary', '予定')}\n"
             if event.get('location'):
-                response += f"📍 場所: {event['location']}\n"
+                message += f"📍 {event['location']}\n"
+            if event.get('description'):
+                message += f"👥 {event['description']}\n"
+            message += "\nまた必要になったら、いつでも追加してくださいね！"
+            return message
+            
+        # 予定の確認
+        elif operation_type in ['read', 'check']:
+            events = result.get('events', [])
+            if not events:
+                return "予定はありません。\n\n新しい予定を追加してみましょう！"
                 
-            return response.strip()
-        return "✅ 予定を追加しました！"
-
-    elif operation_type == 'delete':
-        return "🗑️ 予定を削除しました！"
-
-    elif operation_type == 'update':
-        return "📝 予定を更新しました！"
-
-    return data.get('message', 'エラーが発生しました。')
-
-def try_delete_event(start_time: datetime, end_time: datetime, title: str = None) -> bool:
-    """
-    予定を削除する
-    
-    Args:
-        start_time (datetime): 予定の開始時刻
-        end_time (datetime): 予定の終了時刻
-        title (str, optional): 予定のタイトル（削除時は使用しない）
-        
-    Returns:
-        bool: 削除に成功したかどうか
-    """
-    try:
-        # タイムゾーン情報を確実に設定
-        if start_time.tzinfo is None:
-            start_time = JST.localize(start_time)
-        if end_time.tzinfo is None:
-            end_time = JST.localize(end_time)
-        
-        # 予定を削除（タイトルは無視して日時のみで検索）
-        success = calendar_chat.delete_event(start_time=start_time, end_time=end_time)
-        
-        if success:
-            logger.info(f"予定を削除しました")
-            return True
+            message = "登録中の予定はこちらです👇\n\n"
+            for i, event in enumerate(events, 1):
+                start_time = event.get('start', {}).get('dateTime')
+                title = event.get('summary', '予定')
+                location = event.get('location', '')
+                description = event.get('description', '')
+                
+                message += f"{i}. 🗓 {format_datetime(datetime.fromisoformat(start_time))}\n"
+                if location:
+                    message += f"   📍 {location}\n"
+                message += f"   📌 {title}\n"
+                if description:
+                    message += f"   👥 {description}\n"
+                message += "\n"
+                
+            message += "他にも確認したい日があれば教えてください！"
+            return message
+            
         else:
-            logger.error(f"予定の削除に失敗しました")
-            return False
+            return "申し訳ありません。\n操作を認識できませんでした。\nもう一度お試しください。"
             
     except Exception as e:
-        logger.error(f"予定の削除中にエラーが発生: {str(e)}")
-        return False
-
-def try_add_event(start_time: datetime, end_time: datetime, title: Optional[str] = None,
-                 location: Optional[str] = None, person: Optional[str] = None,
-                 message: Optional[str] = None) -> Dict[str, Any]:
-    """
-    イベントの追加を試みる
-    """
-    try:
-        logger.debug(f"""イベント追加の試行:
-            開始時刻: {start_time}
-            終了時刻: {end_time}
-            タイトル: {title}
-            場所: {location}
-            人物: {person}
-            メッセージ: {message}
-        """)
-        
-        # 必須パラメータのチェック
-        if not start_time or not end_time:
-            logger.error("開始時刻または終了時刻が指定されていません")
-            return {
-                'success': False,
-                'message': '開始時間と終了時間は必須です。'
-            }
-            
-        # タイトルが指定されていない場合、メッセージから抽出を試みる
-        if not title and message:
-            title = extract_title(message)
-            logger.debug(f"メッセージからタイトルを抽出: {title}")
-            if not title:
-                title = "予定"
-                logger.debug("デフォルトのタイトルを使用: 予定")
-                
-        # 場所が指定されていない場合、メッセージから抽出を試みる
-        if not location and message:
-            location = extract_location(message)
-            logger.debug(f"メッセージから場所を抽出: {location}")
-            
-        # 人物が指定されていない場合、メッセージから抽出を試みる
-        if not person and message:
-            person = extract_person(message)
-            logger.debug(f"メッセージから人物を抽出: {person}")
-            
-        # 重複チェック
-        existing_events = calendar_chat.get_events(start_time, end_time)
-        if existing_events:
-            logger.debug(f"既存のイベントを検出: {len(existing_events)}件")
-            # イベントの重複をチェック
-            overlapping_events = []
-            for event in existing_events:
-                event_start = event['start'].get('dateTime')
-                event_end = event['end'].get('dateTime')
-                
-                if event_start and event_end:
-                    event_start = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
-                    event_end = datetime.fromisoformat(event_end.replace('Z', '+00:00'))
-                    
-                    # タイムゾーンを考慮
-                    event_start = event_start.astimezone(JST)
-                    event_end = event_end.astimezone(JST)
-                    
-                    # 重複チェック
-                    if (event_start < end_time and event_end > start_time):
-                        overlap_info = {
-                            'summary': event.get('summary', '予定なし'),
-                            'start': event_start.strftime('%Y-%m-%d %H:%M'),
-                            'end': event_end.strftime('%Y-%m-%d %H:%M'),
-                            'location': event.get('location', ''),
-                            'description': event.get('description', '')
-                        }
-                        logger.debug(f"重複するイベントを検出: {overlap_info}")
-                        overlapping_events.append(overlap_info)
-            
-            if overlapping_events:
-                logger.warning(f"重複する予定が{len(overlapping_events)}件見つかりました")
-                return {
-                    'success': False,
-                    'message': '指定された時間帯に既に予定が存在します。',
-                    'existing_events': overlapping_events
-                }
-            
-        # イベントの追加
-        logger.debug("イベントを追加します")
-        event = calendar_chat.add_event(
-            start_time=start_time,
-            end_time=end_time,
-            title=title,
-            location=location,
-            person=person
-        )
-        
-        if event:
-            logger.info(f"イベントが正常に追加されました: {event.get('summary', '予定なし')}")
-            return {
-                'success': True,
-                'message': '予定を追加しました。',
-                'event': event
-            }
-        else:
-            logger.error("イベントの追加に失敗しました")
-            return {
-                'success': False,
-                'message': '予定の追加に失敗しました。'
-            }
-            
-    except Exception as e:
-        logger.error("予定の追加中に予期せぬエラーが発生:")
-        logger.error(f"エラータイプ: {type(e).__name__}")
-        logger.error(f"エラーメッセージ: {str(e)}")
-        logger.error("スタックトレース:")
+        logger.error(f"メッセージのフォーマット中にエラーが発生: {str(e)}")
         logger.error(traceback.format_exc())
-        return {
-            'success': False,
-            'message': f'予定の追加中にエラーが発生しました: {str(e)}'
-        }
+        return "申し訳ありません。\nメッセージの作成中にエラーが発生しました。\nもう一度お試しください。"
 
-def try_read_event(parsed_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
+def format_event_details(event: dict) -> str:
     """
-    予定を読み取る
+    イベントの詳細をフォーマットする
     
     Args:
-        parsed_data (Dict[str, Any]): パースされたデータ
+        event (dict): イベント情報
         
     Returns:
-        Tuple[bool, Dict[str, Any]]: (成功したかどうか, 結果を含む辞書)
+        str: フォーマットされたイベント詳細
     """
     try:
-        # 現在の日付を取得
-        now = datetime.now(JST)
-        start_time = parsed_data.get('start_time')
-        end_time = parsed_data.get('end_time')
+        start_time = event.get('start', {}).get('dateTime')
+        end_time = event.get('end', {}).get('dateTime')
+        title = event.get('summary', '予定')
+        location = event.get('location', '')
+        description = event.get('description', '')
         
-        # start_timeがNoneの場合、今日の0時を設定
-        if start_time is None:
-            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # end_timeがNoneの場合、今日の23:59:59を設定
-        if end_time is None:
-            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        # タイムゾーン情報を確実に設定
-        if start_time.tzinfo is None:
-            start_time = JST.localize(start_time)
-        if end_time.tzinfo is None:
-            end_time = JST.localize(end_time)
+        message = f"🗓 {format_datetime(datetime.fromisoformat(start_time))}〜\n"
+        if location:
+            message += f"📍 {location}\n"
+        message += f"📌 {title}\n"
+        if description:
+            message += f"👥 {description}\n"
             
-        # 予定を取得
-        events = calendar_chat.get_events(time_min=start_time, time_max=end_time)
+        return message
         
-        if not events:
-            return True, {
-                'success': True,
-                'message': '指定された期間に予定はありません。',
+    except Exception as e:
+        logger.error(f"イベント詳細のフォーマット中にエラーが発生: {str(e)}")
+        return ""
+
+def format_event_list(events: List[Dict]) -> str:
+    """
+    予定のリストを表示用にフォーマットする
+
+    Args:
+        events (List[Dict]): 予定のリスト
+
+    Returns:
+        str: フォーマットされたメッセージ
+    """
+    if not events:
+        return "予定はありません。"
+        
+    # 日付ごとに予定を整理
+    events_by_date = {}
+    for event in events:
+        start = datetime.fromisoformat(event['start'].get('dateTime', event['start'].get('date')))
+        end = datetime.fromisoformat(event['end'].get('dateTime', event['end'].get('date')))
+        
+        # 日本時間に変換
+        jst = timezone(timedelta(hours=9))
+        start = start.astimezone(jst)
+        end = end.astimezone(jst)
+        
+        # 日付をキーとして使用
+        date_key = start.strftime('%Y/%m/%d')
+        
+        # 曜日を取得
+        weekday = ['月', '火', '水', '木', '金', '土', '日'][start.weekday()]
+        
+        # 予定の詳細情報を整形
+        event_details = []
+        event_details.append(f"📌 {event.get('summary', '(タイトルなし)')}")
+        event_details.append(f"⏰ {start.strftime('%H:%M')}～{end.strftime('%H:%M')}")
+        
+        if event.get('location'):
+            event_details.append(f"📍 {event['location']}")
+            
+        if event.get('description'):
+            event_details.append(f"📝 {event['description']}")
+            
+        event_str = "\n".join(event_details)
+        
+        if date_key not in events_by_date:
+            events_by_date[date_key] = {
+                'weekday': weekday,
                 'events': []
             }
-            
-        # イベントを整形
-        formatted_events = []
-        for event in events:
-            event_start = event['start'].get('dateTime')
-            event_end = event['end'].get('dateTime')
-            
-            if event_start and event_end:
-                event_start = datetime.fromisoformat(event_start.replace('Z', '+00:00')).astimezone(JST)
-                event_end = datetime.fromisoformat(event_end.replace('Z', '+00:00')).astimezone(JST)
-                
-                formatted_events.append({
-                    'title': event.get('summary', '予定なし'),
-                    'start_time': event_start,
-                    'end_time': event_end,
-                    'location': event.get('location', ''),
-                    'description': event.get('description', '')
-                })
+        events_by_date[date_key]['events'].append(event_str)
         
-        return True, {
-            'success': True,
-            'message': '予定を取得しました。',
-            'events': formatted_events
-        }
-        
-    except Exception as e:
-        logger.error(f"予定の取得中にエラーが発生: {str(e)}")
-        logger.error(traceback.format_exc())
-        return False, {
-            'success': False,
-            'message': '予定の取得中にエラーが発生しました。',
-            'events': []
-        }
-
-def try_update_event(message: str) -> str:
-    """
-    イベントの更新を試みる
+    # 日付順に整形
+    message = "📅 予定一覧\n"
+    message += "=" * 20 + "\n\n"
     
-    Args:
-        message (str): ユーザーからのメッセージ
+    for date_key in sorted(events_by_date.keys()):
+        date_info = events_by_date[date_key]
+        message += f"🗓 {date_key} ({date_info['weekday']})\n"
+        message += "-" * 15 + "\n"
         
-    Returns:
-        str: 応答メッセージ
-    """
-    try:
-        # メッセージを解析
-        parsed_info = parse_message(message)
-        if not parsed_info or parsed_info.get('operation_type') != 'update':
-            return "申し訳ありません。イベントの更新に必要な情報を取得できませんでした。"
-        
-        start_time = parsed_info.get('start_time')
-        end_time = parsed_info.get('end_time')
-        new_start_time = parsed_info.get('new_start_time')
-        new_duration = parsed_info.get('new_duration')
-        
-        if not start_time or not end_time or (not new_start_time and not new_duration):
-            return "申し訳ありません。イベントの更新に必要な時間情報を取得できませんでした。"
-        
-        # 指定された時間帯のイベントを検索
-        events = calendar_chat.get_events(time_min=start_time, time_max=end_time)
-        if not events:
-            return "指定された時間帯にイベントが見つかりませんでした。"
-        
-        # 最初のイベントを更新
-        event = events[0]
-        event_id = event['id']
-        
-        # 新しい終了時刻を計算
-        if new_start_time:
-            # 元のイベントの時間の長さを維持
-            original_duration = end_time - start_time
-            new_end_time = new_start_time + original_duration
-            update_start_time = new_start_time
-        elif new_duration:
-            # 開始時刻は維持し、新しい時間の長さを適用
-            update_start_time = start_time
-            new_end_time = start_time + new_duration
+        for i, event_str in enumerate(date_info['events'], 1):
+            message += f"{i}. {event_str}\n"
             
-        updated_event = calendar_chat.update_event(
-            event_id=event_id,
-            start_time=update_start_time,
-            end_time=new_end_time,
-            title=event.get('summary'),
-            location=event.get('location')
-        )
+        message += "\n"
         
-        if not updated_event:
-            return "イベントの更新に失敗しました。"
-            
-        # 成功メッセージの生成
-        if new_start_time:
-            return f"予定の開始時刻を{new_start_time.strftime('%H:%M')}に更新しました。"
-        elif new_duration:
-            duration_minutes = int(new_duration.total_seconds() / 60)
-            if duration_minutes >= 60:
-                hours = duration_minutes // 60
-                minutes = duration_minutes % 60
-                if minutes == 0:
-                    return f"予定の時間の長さを{hours}時間に更新しました。"
-                else:
-                    return f"予定の時間の長さを{hours}時間{minutes}分に更新しました。"
-            else:
-                return f"予定の時間の長さを{duration_minutes}分に更新しました。"
-            
-    except Exception as e:
-        logger.error(f"イベントの更新中にエラーが発生: {str(e)}")
-        logger.error(traceback.format_exc())
-        return "予定の更新中にエラーが発生しました。"
-
-def handle_calendar_operation(operation_type: str, parsed_data: dict) -> Tuple[bool, Dict[str, Any]]:
-    """
-    カレンダー操作を実行する
-    
-    Args:
-        operation_type (str): 操作タイプ
-        parsed_data (dict): 解析されたデータ
-        
-    Returns:
-        Tuple[bool, Dict[str, Any]]: 成功したかどうかと結果データ
-    """
-    try:
-        if operation_type == 'add':
-            result = try_add_event(
-                start_time=parsed_data['start_time'],
-                end_time=parsed_data['end_time'],
-                title=parsed_data.get('title'),
-                location=parsed_data.get('location'),
-                person=parsed_data.get('person'),
-                message=parsed_data.get('message')
-            )
-            return result['success'], result
-            
-        elif operation_type == 'delete':
-            success = try_delete_event(
-                start_time=parsed_data['start_time'],
-                end_time=parsed_data['end_time']
-            )
-            return success, {'success': success, 'message': '予定を削除しました' if success else '予定の削除に失敗しました'}
-            
-        elif operation_type == 'update':
-            response = try_update_event(parsed_data['message'])
-            return True, {'success': True, 'message': response}
-            
-        elif operation_type == 'read':
-            success, result = try_read_event(parsed_data)
-            return success, result
-            
-        else:
-            return False, {'message': '不明な操作タイプです'}
-            
-    except Exception as e:
-        logger.error(f"カレンダー操作中にエラーが発生: {str(e)}")
-        logger.error(traceback.format_exc())
-        return False, {'message': f'カレンダー操作中にエラーが発生しました: {str(e)}'}
-
-def process_message_async(event):
-    """
-    メッセージを非同期で処理する
-    """
-    try:
-        # 受信メッセージのログ
-        logger.info(f"非同期処理開始 - ユーザーID: {event.source.user_id}")
-        logger.info(f"受信メッセージ: {event.message.text}")
-        logger.debug(f"イベント詳細: {event}")
-        
-        # メッセージの解析
-        parsed_data = parse_message(event.message.text)
-        logger.info(f"メッセージ解析結果: {parsed_data}")
-        
-        if not parsed_data:
-            logger.error("メッセージの解析に失敗しました")
-            raise ValueError("メッセージの解析に失敗しました")
-            
-        if parsed_data.get('type') == 'error':
-            raise ValueError(parsed_data.get('message', 'メッセージの解析に失敗しました'))
-
-        # カレンダー操作の処理
-        operation_type = parsed_data.get('type', 'read')
-        logger.info(f"カレンダー操作開始 - タイプ: {operation_type}")
-        logger.debug(f"操作パラメータ: {parsed_data}")
-        
-        success, result = handle_calendar_operation(operation_type, parsed_data)
-        logger.info(f"カレンダー操作結果: success={success}, result={result}")
-        
-        # レスポンスメッセージの作成
-        response_message = format_response_message(operation_type, success, result)
-        logger.info(f"生成したレスポンスメッセージ: {response_message}")
-        
-        # 処理結果を新しいメッセージとして送信
-        logger.info("LINE Messaging APIクライアントの初期化開始")
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            logger.info("プッシュメッセージの送信開始")
-            line_bot_api.push_message_with_http_info(
-                PushMessageRequest(
-                    to=event.source.user_id,
-                    messages=[TextMessage(text=response_message)]
-                )
-            )
-            logger.info("プッシュメッセージの送信完了")
-        
-    except Exception as e:
-        logger.error("エラーの詳細情報:")
-        logger.error(f"エラータイプ: {type(e).__name__}")
-        logger.error(f"エラーメッセージ: {str(e)}")
-        logger.error("スタックトレース:")
-        logger.error(traceback.format_exc())
-        
-        try:
-            logger.info("エラーメッセージの送信開始")
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                line_bot_api.push_message_with_http_info(
-                    PushMessageRequest(
-                        to=event.source.user_id,
-                        messages=[TextMessage(text=f"申し訳ありません。エラーが発生しました。\nエラータイプ: {type(e).__name__}\nエラー内容: {str(e)}")]
-                    )
-                )
-            logger.info("エラーメッセージの送信完了")
-        except Exception as reply_error:
-            logger.error(f"エラーメッセージの送信にも失敗しました: {str(reply_error)}")
-            logger.error("スタックトレース:")
-            logger.error(traceback.format_exc())
+    return message
 
 @app.route("/callback", methods=['POST'])
+@retry_on_error
 def callback():
-    # リクエストヘッダーからX-Line-Signatureを取得
-    signature = request.headers['X-Line-Signature']
-
-    # リクエストボディを取得
-    body = request.get_data(as_text=True)
-    logger.info("Webhookリクエストを受信しました")
-    logger.debug(f"リクエストボディ: {body}")
-    logger.debug(f"リクエストヘッダー: {dict(request.headers)}")
-
+    """
+    LINE Messaging APIからのコールバックを処理する
+    """
+    start_time = time.time()
+    logger.info("コールバック処理開始")
+    
     try:
-        # 署名を検証
-        handler.handle(body, signature)
-        logger.info("Webhook署名の検証に成功しました")
-    except InvalidSignatureError:
-        logger.error("Webhook署名の検証に失敗しました")
-        abort(400)
+        with timeout(TIMEOUT_SECONDS):
+            # リクエストヘッダーから署名を取得
+            if 'X-Line-Signature' not in request.headers:
+                logger.error("X-Line-Signatureヘッダーが見つかりません")
+                return 'OK', 200
+            
+            signature = request.headers['X-Line-Signature']
+            
+            # リクエストボディを取得
+            body = request.get_data(as_text=True)
+            logger.debug(f"リクエストボディ: {body}")
+            
+            try:
+                # 署名を検証
+                handler.handle(body, signature)
+                logger.info("署名の検証に成功")
+            except InvalidSignatureError as e:
+                logger.error("署名の検証に失敗しました。")
+                logger.error(traceback.format_exc())
+                return 'OK', 200
+            except Exception as e:
+                logger.error(f"コールバック処理中にエラーが発生: {str(e)}")
+                logger.error(traceback.format_exc())
+                return 'OK', 200
+            
+            processing_time = time.time() - start_time
+            logger.info(f"コールバック処理完了 (処理時間: {processing_time:.2f}秒)")
+            return 'OK', 200
+            
+    except TimeoutError as e:
+        logger.error(f"タイムアウトエラー: {str(e)}")
+        return 'OK', 200
     except Exception as e:
-        logger.error(f"Webhook処理中にエラーが発生: {str(e)}")
-        logger.error("スタックトレース:")
+        logger.error(f"予期せぬエラー: {str(e)}")
         logger.error(traceback.format_exc())
+        return 'OK', 200
 
-    # 即座に200 OKを返す
-    return 'OK'
-
-@handler.add(MessageEvent, message=TextMessageContent)
+@handler.add(MessageEvent)
 def handle_message(event):
-    try:
-        logger.info(f"メッセージイベントを受信 - ユーザーID: {event.source.user_id}")
-        logger.debug(f"イベント詳細: {event}")
+    """
+    LINEメッセージを処理する
+    
+    Args:
+        event (MessageEvent): LINEイベント
+    """
+    if not isinstance(event.message, TextMessageContent):
+        return
 
-        # 即座に応答メッセージを送信
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            logger.info("即時応答メッセージを送信します")
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text="メッセージを受け付けました。処理を開始します。")]
-                )
-            )
-            logger.info("即時応答メッセージの送信が完了しました")
+    reply_message = "申し訳ありません。メッセージの処理中にエラーが発生しました。もう一度試してください。"  # デフォルトのエラーメッセージ
+    
+    try:
+        # メッセージの取得
+        text = event.message.text
         
-        # 非同期でメッセージを処理
-        logger.info("非同期処理を開始します")
-        thread = threading.Thread(target=process_message_async, args=(event,))
-        thread.daemon = True  # メインスレッドが終了したら一緒に終了
-        thread.start()
-        logger.info(f"非同期処理スレッドを開始しました - スレッドID: {thread.ident}")
+        # メッセージの解析
+        result = parse_message(text)
+        
+        # 日時抽出の結果を確認
+        if result.get('type') == 'error':
+            # 日付のみの場合はエラーとしない
+            if '日時情報を抽出できませんでした' in result.get('message', ''):
+                # 今日の日付で0:00〜23:59を設定
+                now = datetime.now(JST)
+                start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+                result = {
+                    'type': 'read',
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'date_only': True
+                }
+            else:
+                raise ValueError(result.get('message', 'メッセージの解析に失敗しました'))
+        
+        # 操作タイプの取得
+        operation_type = result.get('operation_type')
+        
+        # 日時情報のチェック
+        datetime_info = result.get('datetime', {})
+        if operation_type == 'update':
+            if not all(key in datetime_info for key in ['start_time', 'end_time', 'new_start_time', 'new_end_time']):
+                reply_message = "予定の変更に必要な日時情報が不足しています。以下のような形式で入力してください：\n・5月5日10時から12時に変更\n・明日の予定を来週月曜日に変更"
+                messaging_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text=reply_message)]
+                    )
+                )
+                return
+                
+        # カレンダー操作の実行
+        if operation_type == 'update':
+            success = calendar_manager.update_event(
+                start_time=datetime_info['start_time'],
+                end_time=datetime_info['end_time'],
+                new_start_time=datetime_info['new_start_time'],
+                new_end_time=datetime_info['new_end_time'],
+                title=result.get('title'),
+                location=result.get('location'),
+                person=result.get('person')
+            )
+            if success:
+                reply_message = "予定を更新しました。"
+            else:
+                reply_message = "予定の更新に失敗しました。もう一度試してください。"
+                
+        elif operation_type in ['read', 'check']:
+            try:
+                start = result.get('start_time')
+                end = result.get('end_time')
+                # 日付のみの場合は0:00〜23:59に補正
+                if result.get('date_only') and start and end:
+                    start = datetime.combine(start.date(), datetime.min.time()).astimezone(JST)
+                    end = datetime.combine(start.date(), datetime.max.time()).astimezone(JST)
+                events = asyncio.run(calendar_manager.get_events(
+                    start_time=start,
+                    end_time=end
+                ))
+                reply_message = format_event_list(events)
+            except Exception as e:
+                logger.error(f"予定の確認中にエラーが発生: {str(e)}")
+                reply_message = "予定の確認に失敗しました。もう一度試してください。"
+                
+        elif operation_type == 'add':
+            try:
+                # 予定の追加を試みる
+                add_result = asyncio.run(calendar_manager.add_event(
+                    title=result['title'],
+                    start_time=result['start_time'],
+                    end_time=result['end_time'],
+                    location=result.get('location'),
+                    person=result.get('person'),
+                    description=None
+                ))
+                
+                # 結果に基づいてメッセージを設定
+                if add_result.get('success', True):
+                    reply_message = format_response_message({
+                        'operation_type': 'add',
+                        'success': True,
+                        'event': add_result.get('event', {})
+                    })
+                else:
+                    # 重複する予定がある場合
+                    if add_result.get('overlapping_events'):
+                        reply_message = format_response_message({
+                            'operation_type': 'add',
+                            'success': False,
+                            'overlapping_events': add_result['overlapping_events']
+                        })
+                    else:
+                        reply_message = "予定の追加に失敗しました。もう一度試してください。"
+                        
+            except Exception as e:
+                logger.error(f"予定の追加中にエラーが発生: {str(e)}")
+                logger.error(traceback.format_exc())
+                reply_message = "予定の追加に失敗しました。もう一度試してください。"
+                
+        elif operation_type == 'delete':
+            try:
+                result = asyncio.run(calendar_manager.delete_event(
+                    start_time=result['start_time'],
+                    end_time=result['end_time'],
+                    title=result.get('title')
+                ))
+                reply_message = format_response_message(result)
+            except Exception as e:
+                logger.error(f"予定の削除中にエラーが発生: {str(e)}")
+                reply_message = format_response_message({
+                    'operation_type': 'delete',
+                    'success': False
+                })
+                
+        # 応答メッセージの送信
+        messaging_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
         
     except Exception as e:
         logger.error(f"メッセージ処理中にエラーが発生: {str(e)}")
-        logger.error("スタックトレース:")
         logger.error(traceback.format_exc())
+        messaging_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
 
-if __name__ == "__main__":
-    logger.info("アプリケーションを起動します")
-    app.run(port=5051) 
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        
+        # メッセージを解析
+        result = parse_message(message)
+        
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/', methods=['GET'])
+def home():
+    return render_template('base.html')
+
+@app.before_request
+def before_request():
+    # リクエストの開始時刻を記録
+    request.start_time = time.time()
+    # リクエストの詳細をログに記録
+    logger.debug(f"Request: {request.method} {request.url}")
+    logger.debug(f"Headers: {dict(request.headers)}")
+    logger.debug(f"Body: {request.get_data(as_text=True)}")
+
+@app.after_request
+def after_request(response):
+    # リクエストの処理時間を計算してログに記録
+    if hasattr(request, 'start_time'):
+        elapsed = time.time() - request.start_time
+        logger.info(f"Request processed in {elapsed:.2f} seconds")
+        logger.debug(f"Response status: {response.status}")
+        logger.debug(f"Response headers: {dict(response.headers)}")
+    return response
+
+@app.errorhandler(502)
+def bad_gateway_error(error):
+    logger.error(f"502 Bad Gateway Error: {str(error)}")
+    logger.error(f"Request Headers: {dict(request.headers)}")
+    logger.error(f"Request Data: {request.get_data()}")
+    return jsonify({
+        'error': 'Bad Gateway',
+        'message': 'サーバー間の通信に問題が発生しました。',
+        'status_code': 502
+    }), 502
+
+@app.errorhandler(504)
+def gateway_timeout_error(error):
+    logger.error(f"504 Gateway Timeout Error: {str(error)}")
+    logger.error(f"Request Headers: {dict(request.headers)}")
+    logger.error(f"Request Data: {request.get_data()}")
+    return jsonify({
+        'error': 'Gateway Timeout',
+        'message': 'サーバーからの応答がタイムアウトしました。',
+        'status_code': 504
+    }), 504
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    logger.error(f"Unhandled Exception: {str(error)}")
+    logger.error(f"Request Headers: {dict(request.headers)}")
+    logger.error(f"Request Data: {request.get_data()}")
+    logger.error(traceback.format_exc())
+    return jsonify({
+        'error': 'Internal Server Error',
+        'message': '予期せぬエラーが発生しました。',
+        'status_code': 500
+    }), 500
+
+if __name__ == '__main__':
+    # 開発環境でのみFlaskの開発サーバーを使用
+    if os.getenv('FLASK_ENV') == 'development':
+        app.run(host='0.0.0.0', port=args.port, debug=True)
+    else:
+        # 本番環境ではGunicornを使用
+        from gunicorn.app.base import BaseApplication
+
+        class StandaloneApplication(BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
+
+            def load_config(self):
+                for key, value in self.options.items():
+                    if key in self.cfg.settings and value is not None:
+                        self.cfg.set(key.lower(), value)
+
+            def load(self):
+                return self.application
+
+        options = {
+            'bind': f'0.0.0.0:{args.port}',
+            'workers': 1,
+            'timeout': 300,
+            'keepalive': 5,
+            'worker_class': 'sync',
+            'max_requests': 1000,
+            'max_requests_jitter': 50,
+            'accesslog': 'access.log',
+            'errorlog': 'error.log',
+            'loglevel': 'debug',
+            'capture_output': True,
+            'preload_app': True,
+            'proxy_protocol': True,
+            'proxy_allow_ips': '*',
+            'forwarded_allow_ips': '*',
+            'worker_connections': 1000,
+            'graceful_timeout': 30,
+            'limit_request_line': 4094,
+            'limit_request_fields': 100,
+            'limit_request_field_size': 8190,
+            'reload': False,
+            'daemon': False,
+            'pidfile': None,
+            'umask': 0o007,
+            'user': None,
+            'group': None,
+            'tmp_upload_dir': None,
+            'worker_tmp_dir': None,
+            'worker_class': 'sync',
+            'worker_connections': 1000,
+            'backlog': 2048,
+            'limit_request_line': 4094,
+            'limit_request_fields': 100,
+            'limit_request_field_size': 8190,
+            'max_requests': 1000,
+            'max_requests_jitter': 50,
+            'timeout': 300,
+            'graceful_timeout': 30,
+            'keepalive': 5,
+            'spew': False,
+            'check_config': True,
+            'preload_app': True,
+            'reload': False,
+            'daemon': False,
+            'pidfile': None,
+            'umask': 0o007,
+            'user': None,
+            'group': None,
+            'tmp_upload_dir': None,
+            'worker_tmp_dir': None,
+            'worker_class': 'sync',
+            'worker_connections': 1000,
+            'backlog': 2048,
+            'limit_request_line': 4094,
+            'limit_request_fields': 100,
+            'limit_request_field_size': 8190,
+            'max_requests': 1000,
+            'max_requests_jitter': 50,
+            'timeout': 300,
+            'graceful_timeout': 30,
+            'keepalive': 5,
+            'spew': False,
+            'check_config': True
+        }
+
+        StandaloneApplication(app, options).run() 
