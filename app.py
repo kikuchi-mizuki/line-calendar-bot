@@ -525,6 +525,12 @@ def handle_message(event):
                 
         elif operation_type == 'add':
             try:
+                # 時間情報の抽出
+                time_info = extract_time(text)
+                if not time_info['date_only']:
+                    result['start_time'] = time_info['start_time']
+                    result['end_time'] = time_info['end_time']
+                
                 # 予定の追加を試みる
                 add_result = asyncio.run(calendar_manager.add_event(
                     title=result['title'],

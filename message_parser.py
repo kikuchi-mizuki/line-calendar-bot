@@ -790,58 +790,87 @@ def extract_datetime_from_message(text: str, operation_type: str = None) -> Opti
         logger.error(traceback.format_exc())
         return None
 
-def extract_datetime(message: str) -> Dict:
-    """メッセージから日時情報を抽出する"""
-    # タイムゾーンの設定
-    JST = timezone(timedelta(hours=9))
-    now = datetime.now(JST)
-    normalized_message = normalize_text(message)
-
-    # 相対日付表現をチェック
-    if '今日' in normalized_message:
-        # 今日の場合は0:00から23:59までを検索
-        start_time = datetime.combine(now.date(), time(0, 0), tzinfo=JST)
-        end_time = datetime.combine(now.date(), time(23, 59), tzinfo=JST)
-        logger.debug(f"今日の予定を検索: {start_time} から {end_time}")
-        return {
-            'start_time': start_time,
-            'end_time': end_time
-        }
-
-    # 日時表現のパターンマッチング
-    patterns = [
-        (r'明日', lambda m: now + timedelta(days=1)),
-        (r'明後日', lambda m: now + timedelta(days=2)),
-        (r'来週', lambda m: now + timedelta(days=7)),
-        (r'(\d+)日後', lambda m: now + timedelta(days=int(m.group(1)))),
-        (r'(\d+)週間後', lambda m: now + timedelta(weeks=int(m.group(1)))),
-        (r'(\d+)ヶ月後', lambda m: now + timedelta(days=30*int(m.group(1)))),
-        (r'(\d+)年後', lambda m: now + timedelta(days=365*int(m.group(1))))
-    ]
+def extract_time(message: str) -> Dict:
+    """
+    メッセージから時間情報を抽出する
     
-    target_date = None
-    for pattern, func in patterns:
-        match = re.search(pattern, message)
-        if match:
-            target_date = func(match)
-            logger.debug(f"パターンマッチ結果: {pattern}")
-            break
-            
-    if not target_date:
-        logger.debug("パターンマッチ結果: マッチなし")
-        return {
-            'success': False,
-            'message': '日時を特定できませんでした。'
+    Args:
+        message (str): 入力メッセージ
+        
+    Returns:
+        Dict: 時間情報を含む辞書
+    """
+    try:
+        # 現在時刻を取得
+        now = datetime.now(JST)
+        
+        # メッセージの正規化
+        normalized_message = normalize_text(message)
+        logger.debug(f"正規化後のメッセージ: {normalized_message}")
+        logger.debug(f"現在時刻: {now}")
+        
+        # 時間パターンの定義
+        time_patterns = [
+            (r'(\d{1,2})時から', 'start'),  # "8時から" のようなパターン
+            (r'(\d{1,2})時', 'start'),     # "8時" のようなパターン
+            (r'(\d{1,2}):(\d{2})から', 'start'),  # "8:30から" のようなパターン
+            (r'(\d{1,2}):(\d{2})', 'start'),      # "8:30" のようなパターン
+        ]
+        
+        # 時間情報の初期化
+        time_info = {
+            'start_time': None,
+            'end_time': None,
+            'date_only': False
         }
         
-    # 日付の開始時刻と終了時刻を設定（1日分）
-    start_time = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_time = start_time + timedelta(days=1)
-    
-    logger.debug(f"日時抽出結果: {start_time} から {end_time}")
-    
-    return {
-        'success': True,
-        'start_time': start_time,
-        'end_time': end_time
-    }
+        # 時間パターンの検索
+        for pattern, time_type in time_patterns:
+            match = re.search(pattern, normalized_message)
+            if match:
+                if ':' in pattern:
+                    hour = int(match.group(1))
+                    minute = int(match.group(2))
+                else:
+                    hour = int(match.group(1))
+                    minute = 0
+                
+                # 時間の設定
+                if time_type == 'start':
+                    time_info['start_time'] = now.replace(
+                        hour=hour,
+                        minute=minute,
+                        second=0,
+                        microsecond=0
+                    )
+                    # 終了時間を1時間後に設定
+                    time_info['end_time'] = time_info['start_time'] + timedelta(hours=1)
+                    break
+        
+        # 時間が見つからない場合は日付のみとして扱う
+        if time_info['start_time'] is None:
+            time_info['date_only'] = True
+            time_info['start_time'] = now.replace(
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+            time_info['end_time'] = now.replace(
+                hour=23,
+                minute=59,
+                second=59,
+                microsecond=999999
+            )
+        
+        logger.debug(f"抽出された時間情報: {time_info}")
+        return time_info
+        
+    except Exception as e:
+        logger.error(f"時間の抽出中にエラーが発生: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            'start_time': None,
+            'end_time': None,
+            'date_only': True
+        }
