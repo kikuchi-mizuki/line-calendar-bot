@@ -662,6 +662,6 @@ def handle_exception(error):
         'status_code': 500
     }), 500
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 3001))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False) 
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port) 
