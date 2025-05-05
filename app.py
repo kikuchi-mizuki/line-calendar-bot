@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from flask import Flask, request, abort, session, jsonify, render_template
+from flask import Flask, request, abort, session, jsonify, render_template, redirect, url_for
 from linebot.v3 import WebhookHandler
 from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest
 from linebot.v3.exceptions import InvalidSignatureError
@@ -28,6 +28,9 @@ from contextlib import contextmanager
 from werkzeug.middleware.proxy_fix import ProxyFix
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import google.oauth2.credentials
+import google_auth_oauthlib.flow
+import googleapiclient.discovery
 
 # 警告の抑制
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -676,6 +679,44 @@ def handle_exception(error):
         'message': '予期せぬエラーが発生しました。',
         'status_code': 500
     }), 500
+
+@app.route('/authorize')
+def authorize():
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        "client_secret.json",
+        scopes=SCOPES
+    )
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+    session['state'] = state
+    return redirect(authorization_url)
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    state = session['state']
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        "client_secret.json",
+        scopes=SCOPES,
+        state=state
+    )
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+    authorization_response = request.url
+    flow.fetch_token(authorization_response=authorization_response)
+    credentials = flow.credentials
+
+    # ここでユーザーごとにトークンを保存（例：session, DB, ファイルなど）
+    session['credentials'] = {
+        'token': credentials.token,
+        'refresh_token': credentials.refresh_token,
+        'token_uri': credentials.token_uri,
+        'client_id': credentials.client_id,
+        'client_secret': credentials.client_secret,
+        'scopes': credentials.scopes
+    }
+    return 'Google連携が完了しました！このウィンドウを閉じてLINEに戻ってください。'
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
