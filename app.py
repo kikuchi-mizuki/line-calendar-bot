@@ -512,8 +512,13 @@ def handle_message(event):
                 end = result.get('end_time')
                 # 日付のみの場合は0:00〜23:59に補正
                 if result.get('date_only') and start and end:
-                    start = datetime.combine(start.date(), datetime.min.time()).astimezone(JST)
-                    end = datetime.combine(start.date(), datetime.max.time()).astimezone(JST)
+                    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    # タイムゾーンを設定
+                    if start.tzinfo is None:
+                        start = JST.localize(start)
+                    if end.tzinfo is None:
+                        end = JST.localize(end)
                 events = asyncio.run(calendar_manager.get_events(
                     start_time=start,
                     end_time=end
