@@ -405,6 +405,7 @@ class CalendarManager:
             time_max = end_time.isoformat()
             
             logger.debug(f"イベント検索範囲: {time_min} から {time_max}")
+            logger.debug(f"カレンダーID: {self.calendar_id}")
             
             # ThreadPoolExecutorを使用してタイムアウトを実装
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -428,8 +429,14 @@ class CalendarManager:
                         events = [event for event in events if title in event.get('summary', '')]
                     
                     # イベントの詳細をログ出力
+                    logger.debug(f"取得したイベント数: {len(events)}")
                     for event in events:
-                        logger.debug(f"検出されたイベント: {event.get('summary')} ({event.get('start', {}).get('dateTime')} - {event.get('end', {}).get('dateTime')})")
+                        event_id = event.get('id', 'N/A')
+                        event_summary = event.get('summary', 'N/A')
+                        event_start = event.get('start', {}).get('dateTime', 'N/A')
+                        event_end = event.get('end', {}).get('dateTime', 'N/A')
+                        event_status = event.get('status', 'N/A')
+                        logger.debug(f"イベント詳細: ID={event_id}, タイトル={event_summary}, 開始={event_start}, 終了={event_end}, ステータス={event_status}")
                     
                     logger.info(f"イベントを取得しました: {len(events)}件")
                     return events
