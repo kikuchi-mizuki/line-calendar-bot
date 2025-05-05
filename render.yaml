@@ -2,7 +2,7 @@ services:
   - type: web
     name: line-calendar-bot
     env: python
-    buildCommand: pip install --upgrade pip && pip install --force-reinstall gunicorn==21.2.0 && pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir --force-reinstall gunicorn==21.2.0 && pip install -r requirements.txt
     startCommand: gunicorn app:app --workers=4 --bind=0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
