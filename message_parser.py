@@ -809,12 +809,23 @@ def extract_time(message: str) -> Dict:
         logger.debug(f"正規化後のメッセージ: {normalized_message}")
         logger.debug(f"現在時刻: {now}")
         
-        # 時間パターンの定義
+        # 時間パターンの定義（優先順位付き）
         time_patterns = [
+            # 時間範囲のパターン
+            (r'(\d{1,2})時から(\d{1,2})時', 'range'),  # "8時から10時" のようなパターン
+            (r'(\d{1,2}):(\d{2})から(\d{1,2}):(\d{2})', 'range'),  # "8:30から10:30" のようなパターン
+            
+            # 開始時刻のパターン
             (r'(\d{1,2})時から', 'start'),  # "8時から" のようなパターン
-            (r'(\d{1,2})時', 'start'),     # "8時" のようなパターン
             (r'(\d{1,2}):(\d{2})から', 'start'),  # "8:30から" のようなパターン
+            (r'(\d{1,2})時', 'start'),     # "8時" のようなパターン
             (r'(\d{1,2}):(\d{2})', 'start'),      # "8:30" のようなパターン
+            
+            # 午前/午後のパターン
+            (r'午前(\d{1,2})時', 'start'),  # "午前8時" のようなパターン
+            (r'午後(\d{1,2})時', 'start'),  # "午後8時" のようなパターン
+            (r'朝(\d{1,2})時', 'start'),    # "朝8時" のようなパターン
+            (r'夜(\d{1,2})時', 'start'),    # "夜8時" のようなパターン
         ]
         
         # 時間情報の初期化
@@ -828,15 +839,46 @@ def extract_time(message: str) -> Dict:
         for pattern, time_type in time_patterns:
             match = re.search(pattern, normalized_message)
             if match:
-                if ':' in pattern:
-                    hour = int(match.group(1))
-                    minute = int(match.group(2))
+                if time_type == 'range':
+                    # 時間範囲の処理
+                    if ':' in pattern:
+                        start_hour = int(match.group(1))
+                        start_minute = int(match.group(2))
+                        end_hour = int(match.group(3))
+                        end_minute = int(match.group(4))
+                    else:
+                        start_hour = int(match.group(1))
+                        start_minute = 0
+                        end_hour = int(match.group(2))
+                        end_minute = 0
+                    
+                    time_info['start_time'] = now.replace(
+                        hour=start_hour,
+                        minute=start_minute,
+                        second=0,
+                        microsecond=0
+                    )
+                    time_info['end_time'] = now.replace(
+                        hour=end_hour,
+                        minute=end_minute,
+                        second=0,
+                        microsecond=0
+                    )
+                    break
                 else:
-                    hour = int(match.group(1))
-                    minute = 0
-                
-                # 時間の設定
-                if time_type == 'start':
+                    # 開始時刻の処理
+                    if ':' in pattern:
+                        hour = int(match.group(1))
+                        minute = int(match.group(2))
+                    else:
+                        hour = int(match.group(1))
+                        minute = 0
+                    
+                    # 午後や夜の時間を24時間形式に変換
+                    if '午後' in pattern or '夜' in pattern:
+                        if hour < 12:
+                            hour += 12
+                    
                     time_info['start_time'] = now.replace(
                         hour=hour,
                         minute=minute,
