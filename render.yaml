@@ -2,8 +2,8 @@ services:
   - type: web
     name: line-calendar-bot
     env: python
-    buildCommand: pip install --upgrade pip && pip install --upgrade --force-reinstall -r requirements.txt
-    startCommand: gunicorn app:app --worker-class eventlet --bind=0.0.0.0:$PORT
+    buildCommand: pip install --upgrade pip && pip install --force-reinstall gunicorn==21.2.0 && pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers=4 --bind=0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.18

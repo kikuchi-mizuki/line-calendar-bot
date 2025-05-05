@@ -1,4 +1,3 @@
---upgrade-strategy eager
 flask==2.3.3
 line-bot-sdk==3.7.0
 google-api-python-client==2.108.0
