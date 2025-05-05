@@ -12,5 +12,4 @@ dateparser==1.2.0
 python-dotenv==1.0.1
 tenacity>=8.2.3
 eventlet==0.33.3
-gevent==22.10.2
-uvicorn==0.23.2 
+gevent==22.10.2 

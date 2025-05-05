@@ -3,7 +3,7 @@ services:
     name: line-calendar-bot
     env: python
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: ./start.sh
+    startCommand: python app.py --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.18
