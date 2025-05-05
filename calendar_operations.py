@@ -72,25 +72,30 @@ class CalendarManager:
         カレンダーIDを返す
         """
         try:
+            logger.info("カレンダーリストの取得を開始します")
             # カレンダーリストを取得
             calendar_list = self.service.calendarList().list().execute()
             calendars = calendar_list.get('items', [])
             
             # カレンダーリストの詳細をログ出力
-            logger.debug(f"利用可能なカレンダー数: {len(calendars)}")
+            logger.info(f"利用可能なカレンダー数: {len(calendars)}")
             for calendar in calendars:
                 calendar_id = calendar.get('id', 'N/A')
                 calendar_summary = calendar.get('summary', 'N/A')
                 calendar_primary = calendar.get('primary', False)
                 calendar_access_role = calendar.get('accessRole', 'N/A')
-                logger.debug(f"カレンダー詳細: ID={calendar_id}, タイトル={calendar_summary}, プライマリー={calendar_primary}, アクセス権限={calendar_access_role}")
+                logger.info(f"カレンダー詳細: ID={calendar_id}, タイトル={calendar_summary}, プライマリー={calendar_primary}, アクセス権限={calendar_access_role}")
             
             # 指定されたカレンダーIDを検索
             target_calendar_id = 'mmms.dy.23@gmail.com'
+            logger.info(f"指定されたカレンダーIDを検索中: {target_calendar_id}")
+            
             for calendar in calendars:
                 if calendar.get('id') == target_calendar_id:
-                    logger.info(f"指定されたカレンダーを使用します: {target_calendar_id}")
+                    logger.info(f"指定されたカレンダーが見つかりました: {target_calendar_id}")
                     return target_calendar_id
+            
+            logger.warning(f"指定されたカレンダーが見つかりませんでした: {target_calendar_id}")
             
             # 指定されたカレンダーが見つからない場合は、プライマリーカレンダーを検索
             for calendar in calendars:
