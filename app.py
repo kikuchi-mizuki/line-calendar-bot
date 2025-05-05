@@ -345,39 +345,59 @@ def format_event_list(events: List[Dict]) -> str:
     # 日付ごとに予定を整理
     events_by_date = {}
     for event in events:
-        start = datetime.fromisoformat(event['start'].get('dateTime', event['start'].get('date')))
-        end = datetime.fromisoformat(event['end'].get('dateTime', event['end'].get('date')))
-        
-        # 日本時間に変換
-        jst = timezone(timedelta(hours=9))
-        start = start.astimezone(jst)
-        end = end.astimezone(jst)
-        
-        # 日付をキーとして使用
-        date_key = start.strftime('%Y/%m/%d')
-        
-        # 曜日を取得
-        weekday = ['月', '火', '水', '木', '金', '土', '日'][start.weekday()]
-        
-        # 予定の詳細情報を整形
-        event_details = []
-        event_details.append(f"📌 {event.get('summary', '(タイトルなし)')}")
-        event_details.append(f"⏰ {start.strftime('%H:%M')}～{end.strftime('%H:%M')}")
-        
-        if event.get('location'):
-            event_details.append(f"📍 {event['location']}")
-            
-        if event.get('description'):
-            event_details.append(f"📝 {event['description']}")
-            
-        event_str = "\n".join(event_details)
-        
-        if date_key not in events_by_date:
-            events_by_date[date_key] = {
-                'weekday': weekday,
-                'events': []
-            }
-        events_by_date[date_key]['events'].append(event_str)
+        try:
+            # 開始時刻の取得とタイムゾーン変換
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            if start:
+                start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                if start_dt.tzinfo is None:
+                    start_dt = JST.localize(start_dt)
+                else:
+                    start_dt = start_dt.astimezone(JST)
+                
+                # 終了時刻の取得とタイムゾーン変換
+                end = event['end'].get('dateTime', event['end'].get('date'))
+                if end:
+                    end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                    if end_dt.tzinfo is None:
+                        end_dt = JST.localize(end_dt)
+                    else:
+                        end_dt = end_dt.astimezone(JST)
+                
+                # 日付をキーとして使用
+                date_key = start_dt.strftime('%Y/%m/%d')
+                
+                # 曜日を取得
+                weekday = ['月', '火', '水', '木', '金', '土', '日'][start_dt.weekday()]
+                
+                # 予定の詳細情報を整形
+                event_details = []
+                event_details.append(f"📌 {event.get('summary', '(タイトルなし)')}")
+                
+                # 時刻の表示形式を設定
+                if 'dateTime' in event['start']:
+                    event_details.append(f"⏰ {start_dt.strftime('%H:%M')}～{end_dt.strftime('%H:%M')}")
+                else:
+                    event_details.append("⏰ 終日")
+                
+                if event.get('location'):
+                    event_details.append(f"📍 {event['location']}")
+                
+                if event.get('description'):
+                    event_details.append(f"📝 {event['description']}")
+                
+                event_str = "\n".join(event_details)
+                
+                if date_key not in events_by_date:
+                    events_by_date[date_key] = {
+                        'weekday': weekday,
+                        'events': []
+                    }
+                events_by_date[date_key]['events'].append(event_str)
+        except Exception as e:
+            logger.error(f"イベントの処理中にエラーが発生: {str(e)}")
+            logger.error(f"イベントデータ: {event}")
+            continue
         
     # 日付順に整形
     message = "📅 予定一覧\n"
