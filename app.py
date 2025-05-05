@@ -3,7 +3,7 @@ load_dotenv()
 
 from flask import Flask, request, abort, session, jsonify, render_template, redirect, url_for
 from linebot.v3 import WebhookHandler
-from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest, URIAction, TemplateMessage, ButtonsTemplate
+from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest, URIAction, TemplateMessage, ButtonsTemplate, PushMessageRequest
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.messaging import TextMessage
@@ -742,7 +742,13 @@ def send_google_auth_link(user_id):
             ]
         )
     )
-    messaging_api.push_message(to=user_id, messages=[message])
+    # PushMessageRequestでラップして送信
+    messaging_api.push_message(
+        PushMessageRequest(
+            to=user_id,
+            messages=[message]
+        )
+    )
 
 # /authorizeでuser_idを受け取ってセッションに保存
 @app.route('/authorize')
