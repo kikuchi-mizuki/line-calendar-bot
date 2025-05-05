@@ -12,6 +12,5 @@ gunicorn==21.2.0
 dateparser==1.2.0
 python-dotenv==1.0.1
 tenacity>=8.2.3
-urllib3<2.0.0
 eventlet==0.33.3
 gevent==22.10.2 
