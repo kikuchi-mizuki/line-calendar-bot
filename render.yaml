@@ -3,7 +3,7 @@ services:
     name: line-calendar-bot
     env: python
     buildCommand: pip install --upgrade pip && pip install --no-cache-dir --force-reinstall gunicorn==21.2.0 && pip install -r requirements.txt && pip list | grep gunicorn
-    startCommand: sh -c "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    startCommand: ./start.sh
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.18
