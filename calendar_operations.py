@@ -51,11 +51,16 @@ class CalendarManager:
             if not os.path.exists(self.credentials_path):
                 raise ValueError(f"認証情報ファイルが見つかりません: {self.credentials_path}")
                 
+            logger.info(f"認証情報ファイルのパス: {self.credentials_path}")
+            
             # サービスアカウントの認証情報を使用
             credentials = service_account.Credentials.from_service_account_file(
                 self.credentials_path,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
+            
+            logger.info(f"認証情報のスコープ: {credentials.scopes}")
+            logger.info(f"認証情報のメールアドレス: {credentials.service_account_email}")
             
             self.service = build('calendar', 'v3', credentials=credentials)
             logger.info("Google Calendar APIサービスを初期化しました")
