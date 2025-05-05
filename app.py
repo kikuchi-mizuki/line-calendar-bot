@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, request, abort, session, jsonify, render_template
 from linebot.v3 import WebhookHandler
 from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest
@@ -23,6 +26,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import signal
 from contextlib import contextmanager
 from werkzeug.middleware.proxy_fix import ProxyFix
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # 警告の抑制
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -390,6 +395,24 @@ def format_event_list(events: List[Dict]) -> str:
         
     return message
 
+def process_webhook(body, signature):
+    """
+    Webhookの処理を実行する
+    """
+    try:
+        # 署名を検証
+        handler.handle(body, signature)
+        logger.info("署名の検証に成功")
+        return True
+    except InvalidSignatureError as e:
+        logger.error("署名の検証に失敗しました。")
+        logger.error(traceback.format_exc())
+        return False
+    except Exception as e:
+        logger.error(f"コールバック処理中にエラーが発生: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
+
 @app.route("/callback", methods=['POST'])
 @retry_on_error
 def callback():
@@ -400,38 +423,32 @@ def callback():
     logger.info("コールバック処理開始")
     
     try:
-        with timeout(TIMEOUT_SECONDS):
-            # リクエストヘッダーから署名を取得
-            if 'X-Line-Signature' not in request.headers:
-                logger.error("X-Line-Signatureヘッダーが見つかりません")
-                return 'OK', 200
-            
-            signature = request.headers['X-Line-Signature']
-            
-            # リクエストボディを取得
-            body = request.get_data(as_text=True)
-            logger.debug(f"リクエストボディ: {body}")
-            
-            try:
-                # 署名を検証
-                handler.handle(body, signature)
-                logger.info("署名の検証に成功")
-            except InvalidSignatureError as e:
-                logger.error("署名の検証に失敗しました。")
-                logger.error(traceback.format_exc())
-                return 'OK', 200
-            except Exception as e:
-                logger.error(f"コールバック処理中にエラーが発生: {str(e)}")
-                logger.error(traceback.format_exc())
-                return 'OK', 200
-            
-            processing_time = time.time() - start_time
-            logger.info(f"コールバック処理完了 (処理時間: {processing_time:.2f}秒)")
+        # リクエストヘッダーから署名を取得
+        if 'X-Line-Signature' not in request.headers:
+            logger.error("X-Line-Signatureヘッダーが見つかりません")
             return 'OK', 200
-            
-    except TimeoutError as e:
-        logger.error(f"タイムアウトエラー: {str(e)}")
+        
+        signature = request.headers['X-Line-Signature']
+        
+        # リクエストボディを取得
+        body = request.get_data(as_text=True)
+        logger.debug(f"リクエストボディ: {body}")
+        
+        # ThreadPoolExecutorを使用してタイムアウトを実装
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process_webhook, body, signature)
+            try:
+                result = future.result(timeout=TIMEOUT_SECONDS)
+                if not result:
+                    return 'OK', 200
+            except TimeoutError:
+                logger.error(f"処理が{TIMEOUT_SECONDS}秒でタイムアウトしました")
+                return 'OK', 200
+        
+        processing_time = time.time() - start_time
+        logger.info(f"コールバック処理完了 (処理時間: {processing_time:.2f}秒)")
         return 'OK', 200
+        
     except Exception as e:
         logger.error(f"予期せぬエラー: {str(e)}")
         logger.error(traceback.format_exc())
