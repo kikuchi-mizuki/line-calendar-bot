@@ -74,11 +74,34 @@ class CalendarManager:
         try:
             # カレンダーリストを取得
             calendar_list = self.service.calendarList().list().execute()
-            for calendar in calendar_list.get('items', []):
+            calendars = calendar_list.get('items', [])
+            
+            # カレンダーリストの詳細をログ出力
+            logger.debug(f"利用可能なカレンダー数: {len(calendars)}")
+            for calendar in calendars:
+                calendar_id = calendar.get('id', 'N/A')
+                calendar_summary = calendar.get('summary', 'N/A')
+                calendar_primary = calendar.get('primary', False)
+                calendar_access_role = calendar.get('accessRole', 'N/A')
+                logger.debug(f"カレンダー詳細: ID={calendar_id}, タイトル={calendar_summary}, プライマリー={calendar_primary}, アクセス権限={calendar_access_role}")
+            
+            # プライマリーカレンダーを検索
+            for calendar in calendars:
                 if calendar.get('primary', False):
-                    return calendar['id']
-            # プライマリーカレンダーが見つからない場合は、デフォルトのカレンダーIDを使用
+                    calendar_id = calendar['id']
+                    logger.info(f"プライマリーカレンダーを使用します: {calendar_id}")
+                    return calendar_id
+            
+            # プライマリーカレンダーが見つからない場合は、最初のカレンダーを使用
+            if calendars:
+                calendar_id = calendars[0]['id']
+                logger.info(f"プライマリーカレンダーが見つからないため、最初のカレンダーを使用します: {calendar_id}")
+                return calendar_id
+            
+            # カレンダーが見つからない場合は、デフォルトのカレンダーIDを使用
+            logger.warning("利用可能なカレンダーが見つかりません。デフォルトのカレンダーIDを使用します。")
             return 'primary'
+            
         except Exception as e:
             logger.error(f"カレンダーIDの取得に失敗: {str(e)}")
             logger.error(traceback.format_exc())
