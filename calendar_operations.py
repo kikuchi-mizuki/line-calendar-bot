@@ -103,7 +103,7 @@ class CalendarManager:
             end_time = time_zone.localize(end_time) if end_time.tzinfo is None else end_time.astimezone(time_zone)
             
             # イベントの重複チェック
-            overlapping_events = await self._check_overlapping_events(start_time, end_time)
+            overlapping_events = await self._check_overlapping_events(start_time, end_time, title)
             if overlapping_events:
                 return {
                     "success": False,
@@ -431,7 +431,8 @@ class CalendarManager:
     async def _check_overlapping_events(
         self,
         start_time: datetime,
-        end_time: datetime
+        end_time: datetime,
+        title: Optional[str] = None
     ) -> List[Dict]:
         """
         重複するイベントをチェック
@@ -439,6 +440,7 @@ class CalendarManager:
         Args:
             start_time (datetime): 開始時間
             end_time (datetime): 終了時間
+            title (Optional[str]): イベントのタイトル
             
         Returns:
             List[Dict]: 重複するイベントのリスト
@@ -451,8 +453,12 @@ class CalendarManager:
                 event_start = datetime.fromisoformat(event['start']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
                 event_end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
                 
-                # 重複チェックのロジックを改善
-                if (event_start < end_time and event_end > start_time):
+                # タイトルが指定されている場合は、タイトルも一致する必要がある
+                if title and event.get('summary') != title:
+                    continue
+                    
+                # 完全な重複のみをチェック
+                if (event_start == start_time and event_end == end_time):
                     overlapping_events.append({
                         'id': event['id'],
                         'summary': event.get('summary', '予定なし'),
