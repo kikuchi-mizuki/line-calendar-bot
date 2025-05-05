@@ -589,24 +589,34 @@ def handle_message(event):
                     'operation_type': 'delete',
                     'success': False
                 })
-                
+        
         # 応答メッセージの送信
-        messaging_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_message)]
+        try:
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_message)]
+                )
             )
-        )
+            logger.info(f"LINEへの返信を送信しました: {reply_message}")
+        except Exception as e:
+            logger.error(f"LINEへの返信送信中にエラーが発生: {str(e)}")
+            logger.error(traceback.format_exc())
         
     except Exception as e:
         logger.error(f"メッセージ処理中にエラーが発生: {str(e)}")
         logger.error(traceback.format_exc())
-        messaging_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_message)]
+        try:
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_message)]
+                )
             )
-        )
+            logger.info(f"エラーメッセージを送信しました: {reply_message}")
+        except Exception as e:
+            logger.error(f"エラーメッセージの送信中にエラーが発生: {str(e)}")
+            logger.error(traceback.format_exc())
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
