@@ -683,7 +683,7 @@ def handle_exception(error):
 @app.route('/authorize')
 def authorize():
     flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
-        "client_secret.json",
+        CLIENT_SECRETS_FILE,
         scopes=SCOPES
     )
     flow.redirect_uri = url_for('oauth2callback', _external=True)
@@ -698,7 +698,7 @@ def authorize():
 def oauth2callback():
     state = session['state']
     flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
-        "client_secret.json",
+        CLIENT_SECRETS_FILE,
         scopes=SCOPES,
         state=state
     )
