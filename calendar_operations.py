@@ -58,8 +58,9 @@ class CalendarManager:
             )
             
             self.service = build('calendar', 'v3', credentials=credentials)
-            self.calendar_id = 'primary'
-            logger.info("Google Calendar APIサービスを初期化しました")
+            # カレンダーIDを取得
+            self.calendar_id = self._get_calendar_id()
+            logger.info(f"Google Calendar APIサービスを初期化しました (カレンダーID: {self.calendar_id})")
         except Exception as e:
             logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
             logger.error(traceback.format_exc())
@@ -70,7 +71,18 @@ class CalendarManager:
         """
         カレンダーIDを返す
         """
-        return 'mmms.dy.23@gmail.com'
+        try:
+            # カレンダーリストを取得
+            calendar_list = self.service.calendarList().list().execute()
+            for calendar in calendar_list.get('items', []):
+                if calendar.get('primary', False):
+                    return calendar['id']
+            # プライマリーカレンダーが見つからない場合は、デフォルトのカレンダーIDを使用
+            return 'primary'
+        except Exception as e:
+            logger.error(f"カレンダーIDの取得に失敗: {str(e)}")
+            logger.error(traceback.format_exc())
+            return 'primary'
             
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
     async def add_event(
