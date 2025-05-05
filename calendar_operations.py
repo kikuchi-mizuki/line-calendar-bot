@@ -12,6 +12,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import signal
 from contextlib import contextmanager
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ログ設定
 logger = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ class CalendarManager:
                 "error": str(e)
             }
             
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
     async def delete_event(
         self,
         start_time: datetime,
@@ -356,6 +358,7 @@ class CalendarManager:
             logger.error(traceback.format_exc())
             return False
             
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
     async def get_events(
         self,
         start_time: datetime,
@@ -422,6 +425,7 @@ class CalendarManager:
             logger.error(traceback.format_exc())
             return []
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
     async def _check_overlapping_events(
         self,
         start_time: datetime,
