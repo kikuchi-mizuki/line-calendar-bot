@@ -419,13 +419,15 @@ class CalendarManager:
                 )
                 try:
                     result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
-                    # execute()を呼び出して実際のレスポンスを取得
-                    response = result.execute()
-                    events = response.get('items', [])
+                    events = result.get('items', [])
                     
                     # タイトルでフィルタリング
                     if title:
                         events = [event for event in events if title in event.get('summary', '')]
+                    
+                    # イベントの詳細をログ出力
+                    for event in events:
+                        logger.debug(f"検出されたイベント: {event.get('summary')} ({event.get('start', {}).get('dateTime')} - {event.get('end', {}).get('dateTime')})")
                     
                     logger.info(f"イベントを取得しました: {len(events)}件")
                     return events
