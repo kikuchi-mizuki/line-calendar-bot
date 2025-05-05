@@ -2,7 +2,7 @@ services:
   - type: web
     name: line-calendar-bot
     env: python
-    buildCommand: pip install --upgrade pip && pip install --no-cache-dir --force-reinstall gunicorn==21.2.0 && pip install -r requirements.txt && pip list | grep gunicorn
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: ./start.sh
     envVars:
       - key: PYTHON_VERSION
@@ -10,7 +10,7 @@ services:
       - key: PORT
         value: 10000
       - key: PYTHONPATH
-        value: /opt/render/project/src
+        value: .
       - key: FLASK_APP
         value: app.py
       - key: FLASK_ENV
