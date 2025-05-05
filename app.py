@@ -16,7 +16,7 @@ import json
 import asyncio
 import argparse
 from functools import wraps
-from message_parser import parse_message
+from message_parser import parse_message, extract_time
 from calendar_operations import CalendarManager
 from database import DatabaseManager
 from typing import List, Dict
