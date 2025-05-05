@@ -85,17 +85,24 @@ class CalendarManager:
                 calendar_access_role = calendar.get('accessRole', 'N/A')
                 logger.debug(f"カレンダー詳細: ID={calendar_id}, タイトル={calendar_summary}, プライマリー={calendar_primary}, アクセス権限={calendar_access_role}")
             
-            # プライマリーカレンダーを検索
+            # 指定されたカレンダーIDを検索
+            target_calendar_id = 'mmms.dy.23@gmail.com'
+            for calendar in calendars:
+                if calendar.get('id') == target_calendar_id:
+                    logger.info(f"指定されたカレンダーを使用します: {target_calendar_id}")
+                    return target_calendar_id
+            
+            # 指定されたカレンダーが見つからない場合は、プライマリーカレンダーを検索
             for calendar in calendars:
                 if calendar.get('primary', False):
                     calendar_id = calendar['id']
-                    logger.info(f"プライマリーカレンダーを使用します: {calendar_id}")
+                    logger.warning(f"指定されたカレンダーが見つからないため、プライマリーカレンダーを使用します: {calendar_id}")
                     return calendar_id
             
-            # プライマリーカレンダーが見つからない場合は、最初のカレンダーを使用
+            # プライマリーカレンダーも見つからない場合は、最初のカレンダーを使用
             if calendars:
                 calendar_id = calendars[0]['id']
-                logger.info(f"プライマリーカレンダーが見つからないため、最初のカレンダーを使用します: {calendar_id}")
+                logger.warning(f"プライマリーカレンダーも見つからないため、最初のカレンダーを使用します: {calendar_id}")
                 return calendar_id
             
             # カレンダーが見つからない場合は、デフォルトのカレンダーIDを使用
