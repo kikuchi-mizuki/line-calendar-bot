@@ -203,97 +203,60 @@ def format_datetime(dt: datetime) -> str:
         logger.error(f"日時のフォーマット中にエラーが発生: {str(e)}")
         return ""
 
-def format_response_message(result: dict) -> str:
+def format_response_message(operation_type: str, result: Dict) -> str:
     """
-    レスポンスメッセージをフォーマットする
+    操作結果に基づいて応答メッセージをフォーマット
     
     Args:
-        result (dict): 操作結果
+        operation_type (str): 操作の種類
+        result (Dict): 操作結果
         
     Returns:
         str: フォーマットされたメッセージ
     """
     try:
-        operation_type = result.get('operation_type')
-        
-        # 予定の追加
+        if not result.get('success', False):
+            return result.get('message', '操作に失敗しました。')
+            
         if operation_type == 'add':
-            if not result.get('success', True):
-                overlapping_events = result.get('overlapping_events', [])
-                if overlapping_events:
-                    message = "⚠️ 以下の予定と重複しています：\n\n"
-                    for event in overlapping_events:
-                        message += f"・{event['start']}〜{event['end']} {event['summary']}\n"
-                        if event.get('location'):
-                            message += f"  📍 {event['location']}\n"
-                        if event.get('description'):
-                            message += f"  👥 {event['description']}\n"
-                        message += "\n"
-                    message += "別の時間を指定してくださいね！"
-                    return message
-                return "予定の追加に失敗しました。もう一度お試しください。"
+            event = result.get('event')
+            if event:
+                # execute()を呼び出して実際のレスポンスを取得
+                event_data = event.execute()
+                message = "予定を追加しました。\n\n"
+                message += f"📝 {event_data.get('summary', '')}\n"
+                if 'start' in event_data and 'dateTime' in event_data['start']:
+                    message += f"🗓 {format_datetime(datetime.fromisoformat(event_data['start']['dateTime']))}\n"
+                if 'location' in event_data:
+                    message += f"📍 {event_data['location']}\n"
+                if 'description' in event_data:
+                    message += f"📋 {event_data['description']}\n"
+                return message
+            return "予定を追加しました。"
             
-            event = result.get('event', {})
-            message = "予定を登録しました！\n\n"
-            message += f"🗓 {format_datetime(datetime.fromisoformat(event.get('start', {}).get('dateTime', '')))}\n"
-            message += f"📌 {event.get('summary', '予定')}\n"
-            if event.get('location'):
-                message += f"📍 {event['location']}\n"
-            if event.get('description'):
-                message += f"👥 {event['description']}\n"
-            message += "\n何か変更があれば、また教えてくださいね！"
-            return message
-            
-        # 予定の削除
         elif operation_type == 'delete':
-            if not result.get('success', True):
-                return "予定の削除に失敗しました。もう一度お試しください。"
+            deleted_count = result.get('deleted_count', 0)
+            return f"{deleted_count}件の予定を削除しました。"
             
-            event = result.get('event', {})
-            if not event:
-                return "予定を削除しました。\n\nまた必要になったら、いつでも追加してくださいね！"
-            
-            start_time = event.get('start', {}).get('dateTime')
-            if not start_time:
-                return "予定を削除しました。\n\nまた必要になったら、いつでも追加してくださいね！"
-                
-            message = "以下の予定を削除しました。\n\n"
-            message += f"🗓 {format_datetime(datetime.fromisoformat(start_time))}\n"
-            message += f"📌 {event.get('summary', '予定')}\n"
-            if event.get('location'):
-                message += f"📍 {event['location']}\n"
-            if event.get('description'):
-                message += f"👥 {event['description']}\n"
-            message += "\nまた必要になったら、いつでも追加してくださいね！"
-            return message
-            
-        # 予定の確認
-        elif operation_type in ['read', 'check']:
+        elif operation_type == 'list':
             events = result.get('events', [])
             if not events:
-                return "予定はありません。\n\n新しい予定を追加してみましょう！"
+                return "予定はありません。"
                 
-            message = "登録中の予定はこちらです👇\n\n"
-            for i, event in enumerate(events, 1):
-                start_time = event.get('start', {}).get('dateTime')
-                title = event.get('summary', '予定')
-                location = event.get('location', '')
-                description = event.get('description', '')
-                
-                message += f"{i}. 🗓 {format_datetime(datetime.fromisoformat(start_time))}\n"
-                if location:
-                    message += f"   📍 {location}\n"
-                message += f"   📌 {title}\n"
-                if description:
-                    message += f"   👥 {description}\n"
+            message = "予定一覧:\n\n"
+            for event in events:
+                message += f"📝 {event.get('summary', '')}\n"
+                if 'start' in event and 'dateTime' in event['start']:
+                    message += f"🗓 {format_datetime(datetime.fromisoformat(event['start']['dateTime']))}\n"
+                if 'location' in event:
+                    message += f"📍 {event['location']}\n"
+                if 'description' in event:
+                    message += f"📋 {event['description']}\n"
                 message += "\n"
-                
-            message += "他にも確認したい日があれば教えてください！"
             return message
             
-        else:
-            return "申し訳ありません。\n操作を認識できませんでした。\nもう一度お試しください。"
-            
+        return "操作が完了しました。"
+        
     except Exception as e:
         logger.error(f"メッセージのフォーマット中にエラーが発生: {str(e)}")
         logger.error(traceback.format_exc())
@@ -574,16 +537,11 @@ def handle_message(event):
                 
                 # 結果に基づいてメッセージを設定
                 if add_result.get('success', True):
-                    reply_message = format_response_message({
-                        'operation_type': 'add',
-                        'success': True,
-                        'event': add_result.get('event', {})
-                    })
+                    reply_message = format_response_message('add', add_result)
                 else:
                     # 重複する予定がある場合
                     if add_result.get('overlapping_events'):
-                        reply_message = format_response_message({
-                            'operation_type': 'add',
+                        reply_message = format_response_message('add', {
                             'success': False,
                             'overlapping_events': add_result['overlapping_events']
                         })
@@ -602,11 +560,10 @@ def handle_message(event):
                     end_time=result['end_time'],
                     title=result.get('title')
                 ))
-                reply_message = format_response_message(result)
+                reply_message = format_response_message('delete', result)
             except Exception as e:
                 logger.error(f"予定の削除中にエラーが発生: {str(e)}")
-                reply_message = format_response_message({
-                    'operation_type': 'delete',
+                reply_message = format_response_message('delete', {
                     'success': False
                 })
         
