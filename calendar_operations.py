@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import logging
 import pytz
-from google.oauth2.service_account import Credentials
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import os
 import json
@@ -9,15 +9,15 @@ import asyncio
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple, Union
 import traceback
-from tenacity import retry, stop_after_attempt, wait_exponential
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import signal
 from contextlib import contextmanager
 
 # ログ設定
 logger = logging.getLogger(__name__)
 
-# タイムアウト設定
-CALENDAR_TIMEOUT_SECONDS = 5
+# タイムアウト設定（秒）
+CALENDAR_TIMEOUT_SECONDS = 30
 
 @contextmanager
 def calendar_timeout(seconds):
@@ -39,6 +39,7 @@ class CalendarManager:
     def __init__(self, credentials_path: str):
         self.credentials_path = credentials_path
         self.service = None
+        self.calendar_id = None
         self._initialize_service()
         
     def _initialize_service(self):
@@ -50,15 +51,17 @@ class CalendarManager:
                 raise ValueError(f"認証情報ファイルが見つかりません: {self.credentials_path}")
                 
             # サービスアカウントの認証情報を使用
-            credentials = Credentials.from_service_account_file(
+            credentials = service_account.Credentials.from_service_account_file(
                 self.credentials_path,
                 scopes=['https://www.googleapis.com/auth/calendar']
             )
             
             self.service = build('calendar', 'v3', credentials=credentials)
+            self.calendar_id = 'primary'
             logger.info("Google Calendar APIサービスを初期化しました")
         except Exception as e:
             logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
+            logger.error(traceback.format_exc())
             raise
         
     @lru_cache(maxsize=100)
@@ -93,73 +96,80 @@ class CalendarManager:
             Dict: 操作結果
         """
         try:
-            with calendar_timeout(CALENDAR_TIMEOUT_SECONDS):
-                # 終了時間が指定されていない場合は1時間後を設定
-                if not end_time:
-                    end_time = start_time + timedelta(hours=1)
+            # タイムゾーンを設定
+            time_zone = pytz.timezone('Asia/Tokyo')
+            start_time = time_zone.localize(start_time) if start_time.tzinfo is None else start_time.astimezone(time_zone)
+            end_time = time_zone.localize(end_time) if end_time.tzinfo is None else end_time.astimezone(time_zone)
+            
+            # イベントの重複チェック
+            overlapping_events = await self._check_overlapping_events(start_time, end_time)
+            if overlapping_events:
+                return {
+                    "success": False,
+                    "message": "指定された時間帯に既に予定があります。",
+                    "overlapping_events": overlapping_events
+                }
                     
-                # イベントの重複チェック
-                overlapping_events = await self._check_overlapping_events(start_time, end_time)
-                if overlapping_events:
+            # イベントの作成
+            event = {
+                'summary': title,
+                'start': {
+                    'dateTime': start_time.isoformat(),
+                    'timeZone': time_zone.zone
+                },
+                'end': {
+                    'dateTime': end_time.isoformat(),
+                    'timeZone': time_zone.zone
+                }
+            }
+            
+            # オプション項目の追加
+            if location:
+                event['location'] = location
+                
+            # 説明文の作成
+            description_parts = []
+            if person:
+                description_parts.append(f"参加者: {person}")
+            if description:
+                description_parts.append(description)
+                
+            if description_parts:
+                event['description'] = "\n".join(description_parts)
+            
+            # ThreadPoolExecutorを使用してタイムアウトを実装
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.service.events().insert,
+                    calendarId=self.calendar_id,
+                    body=event
+                )
+                try:
+                    result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
+                    logger.info(f"イベントを追加しました: {title}")
+                    return {
+                        "success": True,
+                        "message": "予定を追加しました。",
+                        "event": result
+                    }
+                except TimeoutError:
+                    logger.error(f"イベントの追加が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
                     return {
                         "success": False,
-                        "message": "指定された時間帯に既に予定があります。",
-                        "overlapping_events": overlapping_events
+                        "message": "予定の追加に時間がかかりすぎています。もう一度お試しください。",
+                        "error": "タイムアウト"
                     }
-                    
-                # イベントの作成
-                event = {
-                    'summary': title,
-                    'start': {
-                        'dateTime': start_time.isoformat(),
-                        'timeZone': 'Asia/Tokyo'
-                    },
-                    'end': {
-                        'dateTime': end_time.isoformat(),
-                        'timeZone': 'Asia/Tokyo'
+                except Exception as e:
+                    logger.error(f"イベントの追加中にエラーが発生: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    return {
+                        "success": False,
+                        "message": "予定の追加に失敗しました。",
+                        "error": str(e)
                     }
-                }
                 
-                # オプション項目の追加
-                if location:
-                    event['location'] = location
-                    
-                # 説明文の作成
-                description_parts = []
-                if person:
-                    description_parts.append(f"参加者: {person}")
-                if description:
-                    description_parts.append(description)
-                    
-                if description_parts:
-                    event['description'] = "\n".join(description_parts)
-                
-                # 非同期でイベントを追加
-                loop = asyncio.get_event_loop()
-                created_event = await loop.run_in_executor(
-                    None,
-                    lambda: self.service.events().insert(
-                        calendarId=self._get_calendar_id(),
-                        body=event
-                    ).execute()
-                )
-                
-                logger.info(f"イベントを追加しました: {title}")
-                return {
-                    "success": True,
-                    "message": "予定を追加しました。",
-                    "event": created_event
-                }
-                
-        except TimeoutError as e:
-            logger.error(f"イベントの追加がタイムアウト: {str(e)}")
-            return {
-                "success": False,
-                "message": "予定の追加に時間がかかりすぎています。もう一度お試しください。",
-                "error": str(e)
-            }
         except Exception as e:
-            logger.error(f"イベントの追加に失敗: {str(e)}")
+            logger.error(f"イベントの追加中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return {
                 "success": False,
@@ -204,53 +214,79 @@ class CalendarManager:
             # 検索条件のログ出力
             logger.debug(f"検索条件: timeMin={time_min}, timeMax={time_max}")
             
-            # 非同期でイベントを取得
-            events_result = await self._execute_async(
-                lambda: self.service.events().list(
-                    calendarId=self._get_calendar_id(),
+            # ThreadPoolExecutorを使用してタイムアウトを実装
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.service.events().list,
+                    calendarId=self.calendar_id,
                     timeMin=time_min,
                     timeMax=time_max,
                     singleEvents=True,
                     orderBy='startTime'
-                ).execute()
-            )
-            
-            events = events_result.get('items', [])
-            
-            # イベントの詳細をログ出力
-            if events:
-                for event in events:
-                    logger.debug(f"検出されたイベント: {event.get('summary')} ({event.get('start', {}).get('dateTime')} - {event.get('end', {}).get('dateTime')})")
-            else:
-                logger.debug("検出されたイベントはありません")
-            
-            if not events:
-                return {
-                    'success': False,
-                    'message': '指定された時間帯に予定が見つかりませんでした。',
-                    'context': 'イベントの削除中に検索に失敗しました。'
-                }
-                
-            # 非同期でイベントを削除
-            loop = asyncio.get_event_loop()
-            for event in events:
-                await loop.run_in_executor(
-                    None,
-                    lambda: self.service.events().delete(
-                        calendarId=self._get_calendar_id(),
-                        eventId=event['id']
-                    ).execute()
                 )
-                
-            logger.info(f"イベントを削除しました: {len(events)}件")
-            return {
-                'success': True,
-                'operation_type': 'delete',
-                'event': events[0] if events else None
-            }
+                try:
+                    result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
+                    events = result.get('items', [])
+                    
+                    # イベントの詳細をログ出力
+                    if events:
+                        for event in events:
+                            logger.debug(f"検出されたイベント: {event.get('summary')} ({event.get('start', {}).get('dateTime')} - {event.get('end', {}).get('dateTime')})")
+                    else:
+                        logger.debug("検出されたイベントはありません")
+                    
+                    if not events:
+                        return {
+                            'success': False,
+                            'message': '指定された時間帯に予定が見つかりませんでした。',
+                            'context': 'イベントの削除中に検索に失敗しました。'
+                        }
+                        
+                    # ThreadPoolExecutorを使用してタイムアウトを実装
+                    deleted_count = 0
+                    for event in events:
+                        if title and event.get('summary') != title:
+                            continue
+
+                        future = executor.submit(
+                            self.service.events().delete,
+                            calendarId=self.calendar_id,
+                            eventId=event['id']
+                        )
+                        try:
+                            future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
+                            deleted_count += 1
+                            logger.debug(f"検出されたイベント: {event.get('summary', '')} ({event['start'].get('dateTime', '')} - {event['end'].get('dateTime', '')})")
+                        except TimeoutError:
+                            logger.error(f"イベントの削除が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
+                        except Exception as e:
+                            logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
+                            logger.error(traceback.format_exc())
+                    
+                    logger.info(f"イベントを削除しました: {deleted_count}件")
+                    return {
+                        'success': True,
+                        'deleted_count': deleted_count
+                    }
+                    
+                except TimeoutError:
+                    logger.error(f"イベントの削除が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
+                    return {
+                        'success': False,
+                        'message': '予定の削除に時間がかかりすぎています。もう一度お試しください。',
+                        'error': 'タイムアウト'
+                    }
+                except Exception as e:
+                    logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    return {
+                        'success': False,
+                        'message': str(e),
+                        'context': 'イベントの削除中にエラーが発生しました。'
+                    }
             
         except Exception as e:
-            logger.error(f"イベントの削除に失敗: {str(e)}")
+            logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return {
                 'success': False,
@@ -307,7 +343,7 @@ class CalendarManager:
                 
             # イベントの更新を実行
             updated_event = self.service.events().update(
-                calendarId=self._get_calendar_id(),
+                calendarId=self.calendar_id,
                 eventId=event_id,
                 body=event
             ).execute()
@@ -351,45 +387,41 @@ class CalendarManager:
             
             logger.debug(f"イベント検索範囲: {time_min} から {time_max}")
             
-            # 非同期でイベントを取得
-            events_result = await self._execute_async(
-                lambda: self.service.events().list(
-                    calendarId=self._get_calendar_id(),
+            # ThreadPoolExecutorを使用してタイムアウトを実装
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.service.events().list,
+                    calendarId=self.calendar_id,
                     timeMin=time_min,
                     timeMax=time_max,
                     singleEvents=True,
                     orderBy='startTime',
                     timeZone='Asia/Tokyo'
-                ).execute()
-            )
-            
-            events = events_result.get('items', [])
-            
-            # タイトルでフィルタリング
-            if title:
-                events = [event for event in events if title in event.get('summary', '')]
-                
-            logger.info(f"イベントを取得しました: {len(events)}件")
-            return events
+                )
+                try:
+                    result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
+                    events = result.get('items', [])
+                    
+                    # タイトルでフィルタリング
+                    if title:
+                        events = [event for event in events if title in event.get('summary', '')]
+                    
+                    logger.info(f"イベントを取得しました: {len(events)}件")
+                    return events
+                    
+                except TimeoutError:
+                    logger.error(f"イベントの取得が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
+                    return []
+                except Exception as e:
+                    logger.error(f"イベントの取得中にエラーが発生: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    return []
             
         except Exception as e:
-            logger.error(f"イベントの取得に失敗: {str(e)}")
+            logger.error(f"イベントの取得中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return []
 
-    async def _execute_async(self, func):
-        """
-        非同期実行のヘルパーメソッド
-        
-        Args:
-            func: 実行する関数
-            
-        Returns:
-            関数の実行結果
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func)
-            
     async def _check_overlapping_events(
         self,
         start_time: datetime,
@@ -406,38 +438,12 @@ class CalendarManager:
             List[Dict]: 重複するイベントのリスト
         """
         try:
-            # タイムゾーンの設定
-            jst = pytz.timezone('Asia/Tokyo')
-            start_time = start_time.astimezone(jst)
-            end_time = end_time.astimezone(jst)
-            
-            # イベントの検索範囲を広げる（前後30分）
-            search_start = start_time - timedelta(minutes=30)
-            search_end = end_time + timedelta(minutes=30)
-            
-            # イベントの検索条件を設定
-            time_min = search_start.isoformat()
-            time_max = search_end.isoformat()
-            
-            # 非同期でイベントを取得
-            loop = asyncio.get_event_loop()
-            events_result = await loop.run_in_executor(
-                None,
-                lambda: self.service.events().list(
-                    calendarId=self._get_calendar_id(),
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    singleEvents=True,
-                    orderBy='startTime'
-                ).execute()
-            )
-            
-            events = events_result.get('items', [])
+            events = await self.get_events(start_time, end_time)
             overlapping_events = []
             
             for event in events:
-                event_start = datetime.fromisoformat(event['start']['dateTime'].replace('Z', '+00:00')).astimezone(jst)
-                event_end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00')).astimezone(jst)
+                event_start = datetime.fromisoformat(event['start']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
+                event_end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
                 
                 # 重複チェックのロジックを改善
                 if (event_start < end_time and event_end > start_time):
@@ -454,7 +460,7 @@ class CalendarManager:
             return overlapping_events
             
         except Exception as e:
-            logger.error(f"重複チェックに失敗: {str(e)}")
+            logger.error(f"重複チェック中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return []
             
@@ -501,9 +507,9 @@ class CalendarManager:
         try:
             # タイムゾーンの設定
             if start_time.tzinfo is None:
-                start_time = JST.localize(start_time)
+                start_time = pytz.timezone('Asia/Tokyo').localize(start_time)
             if end_time.tzinfo is None:
-                end_time = JST.localize(end_time)
+                end_time = pytz.timezone('Asia/Tokyo').localize(end_time)
                 
             # イベントの取得
             events = self.get_events(start_time, end_time)
@@ -513,8 +519,8 @@ class CalendarManager:
             current_time = start_time
             
             for event in events:
-                event_start = datetime.fromisoformat(event['start']['dateTime'].replace('Z', '+00:00')).astimezone(JST)
-                event_end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00')).astimezone(JST)
+                event_start = datetime.fromisoformat(event['start']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
+                event_end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00')).astimezone(pytz.timezone('Asia/Tokyo'))
                 
                 # イベントの開始時刻までに空き時間がある場合
                 if event_start - current_time >= duration:
