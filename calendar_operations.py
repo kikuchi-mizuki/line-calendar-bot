@@ -381,8 +381,12 @@ class CalendarManager:
             jst = pytz.timezone('Asia/Tokyo')
             if start_time.tzinfo is None:
                 start_time = jst.localize(start_time)
+            else:
+                start_time = start_time.astimezone(jst)
             if end_time.tzinfo is None:
                 end_time = jst.localize(end_time)
+            else:
+                end_time = end_time.astimezone(jst)
             
             # イベントの検索条件を設定
             time_min = start_time.isoformat()
