@@ -58,9 +58,13 @@ class CalendarManager:
             )
             
             self.service = build('calendar', 'v3', credentials=credentials)
+            logger.info("Google Calendar APIサービスを初期化しました")
+            
             # カレンダーIDを取得
+            logger.info("カレンダーIDの取得を開始します")
             self.calendar_id = self._get_calendar_id()
-            logger.info(f"Google Calendar APIサービスを初期化しました (カレンダーID: {self.calendar_id})")
+            logger.info(f"カレンダーIDを設定しました: {self.calendar_id}")
+            
         except Exception as e:
             logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
             logger.error(traceback.format_exc())
