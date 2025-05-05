@@ -3,7 +3,7 @@ load_dotenv()
 
 from flask import Flask, request, abort, session, jsonify, render_template, redirect, url_for
 from linebot.v3 import WebhookHandler
-from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest
+from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest, URIAction, TemplateMessage, ButtonsTemplate
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.messaging import TextMessage
@@ -440,6 +440,40 @@ def callback():
         logger.error(traceback.format_exc())
         return 'OK', 200
 
+# user_tokens.jsonからユーザーごとのGoogle認証情報を取得
+
+def get_user_credentials(line_user_id):
+    try:
+        with open('user_tokens.json', 'r') as f:
+            tokens = json.load(f)
+    except FileNotFoundError:
+        tokens = {}
+    user_token = tokens.get(line_user_id)
+    if not user_token:
+        return None
+    credentials = google.oauth2.credentials.Credentials(
+        token=user_token['token'],
+        refresh_token=user_token['refresh_token'],
+        token_uri=user_token['token_uri'],
+        client_id=user_token['client_id'],
+        client_secret=user_token['client_secret'],
+        scopes=user_token['scopes']
+    )
+    return credentials
+
+# Googleカレンダー予定一覧を取得
+
+def get_user_events(line_user_id):
+    credentials = get_user_credentials(line_user_id)
+    if not credentials:
+        return None
+    service = googleapiclient.discovery.build('calendar', 'v3', credentials=credentials)
+    events_result = service.events().list(calendarId='primary', maxResults=10).execute()
+    events = events_result.get('items', [])
+    if not events:
+        return "予定はありません。"
+    return "\n".join([event['summary'] for event in events if 'summary' in event])
+
 @handler.add(MessageEvent)
 def handle_message(event):
     """
@@ -609,6 +643,22 @@ def handle_message(event):
             logger.error(f"エラーメッセージの送信中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
 
+    # handle_messageで「今日の予定を教えて」に対応
+    if text == "今日の予定を教えて":
+        events_message = get_user_events(event.source.user_id)
+        if events_message is None:
+            send_google_auth_link(event.source.user_id)
+            reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
+        else:
+            reply_message = events_message
+        messaging_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
+        return
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -680,8 +730,26 @@ def handle_exception(error):
         'status_code': 500
     }), 500
 
+# Google連携ボタンをLINEユーザーに送信する関数
+def send_google_auth_link(user_id):
+    auth_url = f"https://line-calendar-bot-q8d3.onrender.com/authorize?user_id={user_id}"
+    message = TemplateMessage(
+        alt_text="Google連携はこちらから",
+        template=ButtonsTemplate(
+            text="Googleカレンダーと連携するには下のボタンを押してください。",
+            actions=[
+                URIAction(label="Google連携", uri=auth_url)
+            ]
+        )
+    )
+    messaging_api.push_message(to=user_id, messages=[message])
+
+# /authorizeでuser_idを受け取ってセッションに保存
 @app.route('/authorize')
 def authorize():
+    user_id = request.args.get('user_id')
+    if user_id:
+        session['line_user_id'] = user_id
     flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES
@@ -694,6 +762,7 @@ def authorize():
     session['state'] = state
     return redirect(authorization_url)
 
+# /oauth2callbackでuser_idとトークンをuser_tokens.jsonに保存
 @app.route('/oauth2callback')
 def oauth2callback():
     state = session['state']
@@ -706,16 +775,24 @@ def oauth2callback():
     authorization_response = request.url
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
-
-    # ここでユーザーごとにトークンを保存（例：session, DB, ファイルなど）
-    session['credentials'] = {
-        'token': credentials.token,
-        'refresh_token': credentials.refresh_token,
-        'token_uri': credentials.token_uri,
-        'client_id': credentials.client_id,
-        'client_secret': credentials.client_secret,
-        'scopes': credentials.scopes
-    }
+    line_user_id = session.get('line_user_id')
+    # トークンをファイルに保存（本番はDB推奨）
+    if line_user_id:
+        try:
+            with open('user_tokens.json', 'r') as f:
+                tokens = json.load(f)
+        except FileNotFoundError:
+            tokens = {}
+        tokens[line_user_id] = {
+            'token': credentials.token,
+            'refresh_token': credentials.refresh_token,
+            'token_uri': credentials.token_uri,
+            'client_id': credentials.client_id,
+            'client_secret': credentials.client_secret,
+            'scopes': credentials.scopes
+        }
+        with open('user_tokens.json', 'w') as f:
+            json.dump(tokens, f)
     return 'Google連携が完了しました！このウィンドウを閉じてLINEに戻ってください。'
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
