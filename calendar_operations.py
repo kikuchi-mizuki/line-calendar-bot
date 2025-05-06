@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import logging
 import pytz
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import os
 import json
@@ -35,41 +35,25 @@ def calendar_timeout(seconds):
 
 class CalendarManager:
     """
-    Google Calendar APIを使用してカレンダー操作を行うクラス
+    Google Calendar APIを使用してカレンダー操作を行うクラス（OAuth認証対応）
     """
-    def __init__(self, credentials_path: str):
-        self.credentials_path = credentials_path
+    def __init__(self, credentials):
+        self.credentials = credentials
         self.service = None
         self.calendar_id = None
         self._initialize_service()
         
     def _initialize_service(self):
         """
-        Google Calendar APIサービスを初期化
+        Google Calendar APIサービスを初期化（OAuth認証）
         """
         try:
-            if not os.path.exists(self.credentials_path):
-                raise ValueError(f"認証情報ファイルが見つかりません: {self.credentials_path}")
-                
-            logger.info(f"認証情報ファイルのパス: {self.credentials_path}")
-            
-            # サービスアカウントの認証情報を使用
-            credentials = service_account.Credentials.from_service_account_file(
-                self.credentials_path,
-                scopes=['https://www.googleapis.com/auth/calendar']
-            )
-            
-            logger.info(f"認証情報のスコープ: {credentials.scopes}")
-            logger.info(f"認証情報のメールアドレス: {credentials.service_account_email}")
-            
-            self.service = build('calendar', 'v3', credentials=credentials)
-            logger.info("Google Calendar APIサービスを初期化しました")
-            
+            self.service = build('calendar', 'v3', credentials=self.credentials)
+            logger.info("Google Calendar APIサービスを初期化しました（OAuth認証）")
             # カレンダーIDを取得
             logger.info("カレンダーIDの取得を開始します")
             self.calendar_id = self._get_calendar_id()
             logger.info(f"カレンダーIDを設定しました: {self.calendar_id}")
-            
         except Exception as e:
             logger.error(f"Google Calendar APIサービスの初期化に失敗: {str(e)}")
             logger.error(traceback.format_exc())

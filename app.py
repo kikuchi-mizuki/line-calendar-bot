@@ -465,7 +465,10 @@ def get_user_credentials(line_user_id):
 
 def get_user_events(line_user_id):
     try:
-        calendar_manager = CalendarManager(line_user_id)
+        credentials = get_user_credentials(line_user_id)
+        if not credentials:
+            return None
+        calendar_manager = CalendarManager(credentials)
         events = asyncio.run(calendar_manager.get_events(
             start_time=datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0),
             end_time=datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -537,8 +540,10 @@ def handle_message(event):
         # 日時情報のチェック
         datetime_info = result.get('datetime', {})
         if operation_type == 'update':
-            if not all(key in datetime_info for key in ['start_time', 'end_time', 'new_start_time', 'new_end_time']):
-                reply_message = "予定の変更に必要な日時情報が不足しています。以下のような形式で入力してください：\n・5月5日10時から12時に変更\n・明日の予定を来週月曜日に変更"
+            credentials = get_user_credentials(line_user_id)
+            if not credentials:
+                send_google_auth_link(line_user_id)
+                reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
                 messaging_api.reply_message(
                     ReplyMessageRequest(
                         reply_token=event.reply_token,
@@ -546,10 +551,7 @@ def handle_message(event):
                     )
                 )
                 return
-                
-        # カレンダー操作の実行
-        if operation_type == 'update':
-            calendar_manager = CalendarManager(line_user_id)
+            calendar_manager = CalendarManager(credentials)
             success = calendar_manager.update_event(
                 start_time=datetime_info['start_time'],
                 end_time=datetime_info['end_time'],
@@ -566,7 +568,18 @@ def handle_message(event):
                 
         elif operation_type in ['read', 'check']:
             try:
-                calendar_manager = CalendarManager(line_user_id)
+                credentials = get_user_credentials(line_user_id)
+                if not credentials:
+                    send_google_auth_link(line_user_id)
+                    reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
+                    messaging_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[TextMessage(text=reply_message)]
+                        )
+                    )
+                    return
+                calendar_manager = CalendarManager(credentials)
                 start = result.get('start_time')
                 end = result.get('end_time')
                 # 日付のみの場合は0:00〜23:59に補正
@@ -589,7 +602,18 @@ def handle_message(event):
                 
         elif operation_type == 'add':
             try:
-                calendar_manager = CalendarManager(line_user_id)
+                credentials = get_user_credentials(line_user_id)
+                if not credentials:
+                    send_google_auth_link(line_user_id)
+                    reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
+                    messaging_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[TextMessage(text=reply_message)]
+                        )
+                    )
+                    return
+                calendar_manager = CalendarManager(credentials)
                 # 時間情報の抽出
                 time_info = extract_time(text)
                 if not time_info['date_only']:
@@ -626,7 +650,18 @@ def handle_message(event):
                 
         elif operation_type == 'delete':
             try:
-                calendar_manager = CalendarManager(line_user_id)
+                credentials = get_user_credentials(line_user_id)
+                if not credentials:
+                    send_google_auth_link(line_user_id)
+                    reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
+                    messaging_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[TextMessage(text=reply_message)]
+                        )
+                    )
+                    return
+                calendar_manager = CalendarManager(credentials)
                 result = asyncio.run(calendar_manager.delete_event(
                     start_time=result['start_time'],
                     end_time=result['end_time'],
