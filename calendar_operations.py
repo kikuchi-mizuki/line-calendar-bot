@@ -520,22 +520,28 @@ class CalendarManager:
         title: Optional[str] = None
     ) -> List[Dict]:
         """
-        条件に一致するイベントを検索
-        
-        Args:
-            start_time (datetime): 開始時間
-            end_time (datetime): 終了時間
-            title (Optional[str]): イベントのタイトル
-            
-        Returns:
-            List[Dict]: イベントのリスト
+        条件に一致するイベントを検索（前後1時間も含めて柔軟に）
         """
         try:
-            events = await self.get_events(start_time, end_time)
-            if title:
-                events = [e for e in events if title in e.get('summary', '')]
-            return events
-            
+            from datetime import timedelta
+            # 検索範囲を前後1時間に拡大
+            search_start = start_time - timedelta(hours=1)
+            search_end = end_time + timedelta(hours=1)
+            events = await self.get_events(search_start, search_end)
+            matched = []
+            for e in events:
+                # タイトル部分一致
+                if title and title not in e.get('summary', ''):
+                    continue
+                # 指定時刻に最も近いイベントを優先
+                event_start_str = e['start'].get('dateTime') or e['start'].get('date')
+                if not event_start_str:
+                    continue
+                event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                # 1時間以内のイベントを対象
+                if abs((event_start - start_time).total_seconds()) <= 3600:
+                    matched.append(e)
+            return matched
         except Exception as e:
             logger.error(f"イベントの検索に失敗: {str(e)}")
             return []
