@@ -420,54 +420,25 @@ def extract_title(text: str, operation_type: str = None) -> str:
         logger.debug("操作タイプがreadのため、タイトルをNoneにします")
         return None
 
-    # 日時表現を削除
-    text_without_datetime = remove_datetime_expressions(normalized_text)
-    logger.debug(f"日時表現削除後: {text_without_datetime}")
+    # 改行が含まれる場合は全体をタイトルとする
+    if '\n' in normalized_text:
+        title = normalized_text.replace('\n', ' ').strip()
+    else:
+        title = normalized_text
 
-    # 場所情報を削除
-    text_without_location = re.sub(r'。?場所は[^。]*|。?会場は[^。]*|。?(?:で|にて)[^。、]*(?:で|に|へ|と|は|が|を)?', '', text_without_datetime)
-    logger.debug(f"場所情報削除後: {text_without_location}")
-
-    # 参加者情報を削除
-    text_without_participants = re.sub(r'。?参加者.*$', '', text_without_location)
-    logger.debug(f"参加者情報削除後: {text_without_participants}")
-
-    # 不要な語を除去
+    # 末尾の追加・登録・入れて等のキーワードを除去
     patterns_to_remove = [
-        r'^(?:から|を|に|で|へ|と|が|の)+',  # 先頭の助詞を除去
-        r'(?:から|まで|翌日)+',  # 時間関連の表現を除去
-        r'(?:を|に|で|へ|と|が|の)?追加して[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?追加[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?登録して[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?登録[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?入れて[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?入れる[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?作って[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?作る[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?設定して[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?設定[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?立てて[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?立てる[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?組んで[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?組む[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?決めて[。｡]?$',
-        r'(?:を|に|で|へ|と|が|の)?決める[。｡]?$',
-        r'[。｡]$',
-        r'^[。｡]',
-        r'ま$',  # 「まで」の残りを削除
+        r'(を)?追加して[。｡]?$', r'(を)?追加[。｡]?$', r'(を)?登録して[。｡]?$', r'(を)?登録[。｡]?$',
+        r'(を)?入れて[。｡]?$', r'(を)?入れる[。｡]?$', r'(を)?作って[。｡]?$', r'(を)?作る[。｡]?$',
+        r'(を)?設定して[。｡]?$', r'(を)?設定[。｡]?$', r'(を)?立てて[。｡]?$', r'(を)?立てる[。｡]?$',
+        r'(を)?組んで[。｡]?$', r'(を)?組む[。｡]?$', r'(を)?決めて[。｡]?$', r'(を)?決める[。｡]?$',
+        r'[。｡]$','^[。｡]'
     ]
-    
-    title = text_without_participants
     for pattern in patterns_to_remove:
         title = re.sub(pattern, '', title)
-
-    # 空白を削除
     title = title.strip()
-
-    # タイトルが空の場合はNone
     if not title:
         title = None
-
     logger.debug(f"最終的なタイトル: {title}")
     return title
 
@@ -490,53 +461,19 @@ def remove_datetime_expressions(text: str) -> str:
     return text
 
 def extract_location(text: str) -> Optional[str]:
-    """メッセージから場所を抽出する"""
+    """メッセージから場所を抽出する（明示的なパターンのみ）"""
     try:
         normalized_message = normalize_text(text)
-        
-        # 場所を表すパターン
+        # 明示的なパターンのみ
         location_patterns = [
-            r'場所は(?P<location>[^。]+?)(?:。|$|から|まで|と|は|が|を|に|へ)',
-            r'場所(?P<location>[^。]+?)(?:。|$|から|まで|と|は|が|を|に|へ)',
-            r'会場は(?P<location>[^。]+?)(?:。|$|から|まで|と|は|が|を|に|へ)',
-            r'会場(?P<location>[^。]+?)(?:。|$|から|まで|と|は|が|を|に|へ)',
-            r'(?:で|にて)(?P<location>[^。、]+?)(?:で|に|へ|と|は|が|を)?(?:。|$|から|まで)',
+            r'場所は(?P<location>[^。\n]+)',
+            r'会場は(?P<location>[^。\n]+)'
         ]
-        
-        # タイトルと同じ文字列は場所として扱わない
-        title = extract_title(text)
-        if title and title in normalized_message:
-            normalized_message = normalized_message.replace(title, '')
-        
         for pattern in location_patterns:
             match = re.search(pattern, normalized_message)
             if match:
                 location = match.group('location').strip()
-                # 不要な語を除去
-                patterns_to_remove = [
-                    r'(?:を|に|で|へ|と|が|の)?追加して[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?追加[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?登録して[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?登録[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?入れて[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?入れる[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?作って[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?作る[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?設定して[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?設定[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?立てて[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?立てる[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?組んで[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?組む[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?決めて[。｡]?$',
-                    r'(?:を|に|で|へ|と|が|の)?決める[。｡]?$',
-                ]
-                for remove_pattern in patterns_to_remove:
-                    location = re.sub(remove_pattern, '', location)
-                location = location.strip()
-                # タイトルと同じ場合はNoneを返す
-                return None if location == title else location
-        
+                return location
         return None
     except Exception as e:
         logger.error(f"場所抽出エラー: {str(e)}")
