@@ -442,9 +442,9 @@ def callback():
         return 'OK', 200
 
 # user_tokens.jsonからユーザーごとのGoogle認証情報を取得
-def get_user_credentials(line_user_id):
+def get_user_credentials(user_id):
     try:
-        credentials = db_manager.get_google_credentials(line_user_id)
+        credentials = db_manager.get_google_credentials(user_id)
         if not credentials:
             return None
         return google.oauth2.credentials.Credentials(
@@ -816,12 +816,11 @@ def oauth2callback():
     authorization_response = request.url
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
-    line_user_id = session.get('line_user_id')
+    user_id = session.get('line_user_id')
     
-    if line_user_id:
+    if user_id:
         try:
-            # 認証情報をデータベースに保存
-            db_manager.save_google_credentials(line_user_id, {
+            db_manager.save_google_credentials(user_id, {
                 'token': credentials.token,
                 'refresh_token': credentials.refresh_token,
                 'token_uri': credentials.token_uri,
