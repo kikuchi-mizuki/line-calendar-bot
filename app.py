@@ -583,8 +583,10 @@ def handle_message(event):
                 end = result.get('end_time')
                 # 日付のみの場合は0:00〜23:59に補正
                 if result.get('date_only') and start and end:
-                    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
-                    end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    # 週や月など範囲指定の場合はstartとendが異なる
+                    if start.date() == end.date():
+                        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+                        end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
                     # タイムゾーンを設定
                     if start.tzinfo is None:
                         start = JST.localize(start)
