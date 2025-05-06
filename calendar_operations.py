@@ -474,6 +474,7 @@ class CalendarManager:
                         events = [event for event in events if title in event.get('summary', '')]
                     
                     # イベントの詳細をログ出力
+                    logger.debug(f"APIから取得したイベント: {events}")
                     logger.debug(f"取得したイベント数: {len(events)}")
                     for event in events:
                         event_id = event.get('id', 'N/A')
