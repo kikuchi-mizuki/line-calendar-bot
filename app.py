@@ -620,7 +620,6 @@ def handle_message(event):
                 if not time_info['date_only']:
                     result['start_time'] = time_info['start_time']
                     result['end_time'] = time_info['end_time']
-                
                 # 予定の追加を試みる
                 add_result = asyncio.run(calendar_manager.add_event(
                     title=result['title'],
@@ -630,20 +629,15 @@ def handle_message(event):
                     person=result.get('person'),
                     description=None
                 ))
-                
                 # 結果に基づいてメッセージを設定
                 if add_result.get('success', True):
                     reply_message = format_response_message('add', add_result)
                 else:
                     # 重複する予定がある場合
                     if add_result.get('overlapping_events'):
-                        reply_message = format_response_message('add', {
-                            'success': False,
-                            'overlapping_events': add_result['overlapping_events']
-                        })
+                        reply_message = "指定された時間帯に既に予定があります。"
                     else:
                         reply_message = "予定の追加に失敗しました。もう一度試してください。"
-                        
             except Exception as e:
                 logger.error(f"予定の追加中にエラーが発生: {str(e)}")
                 logger.error(traceback.format_exc())
