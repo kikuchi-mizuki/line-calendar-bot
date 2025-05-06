@@ -61,7 +61,7 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS google_credentials (
                         user_id TEXT PRIMARY KEY,
                         token TEXT NOT NULL,
-                        refresh_token TEXT NOT NULL,
+                        refresh_token TEXT,
                         token_uri TEXT NOT NULL,
                         client_id TEXT NOT NULL,
                         client_secret TEXT NOT NULL,
@@ -305,6 +305,13 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
+                # 既存のrefresh_tokenが必要な場合は取得
+                refresh_token = credentials.get('refresh_token')
+                if not refresh_token:
+                    cursor.execute('SELECT refresh_token FROM google_credentials WHERE user_id = ?', (user_id,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        refresh_token = row[0]
                 cursor.execute('''
                     INSERT OR REPLACE INTO google_credentials 
                     (user_id, token, refresh_token, token_uri, client_id, client_secret, scopes, expires_at)
@@ -312,7 +319,7 @@ class DatabaseManager:
                 ''', (
                     user_id,
                     credentials['token'],
-                    credentials['refresh_token'],
+                    refresh_token,
                     credentials['token_uri'],
                     credentials['client_id'],
                     credentials['client_secret'],
