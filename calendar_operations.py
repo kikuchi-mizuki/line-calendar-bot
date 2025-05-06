@@ -80,15 +80,12 @@ class CalendarManager:
     @lru_cache(maxsize=100)
     def _get_calendar_id(self) -> str:
         """
-        カレンダーIDを返す
+        カレンダーIDを返す（プライマリーカレンダーを優先）
         """
         try:
             logger.info("カレンダーリストの取得を開始します")
-            # カレンダーリストを取得
             calendar_list = self.service.calendarList().list().execute()
             calendars = calendar_list.get('items', [])
-            
-            # カレンダーリストの詳細をログ出力
             logger.info(f"利用可能なカレンダー数: {len(calendars)}")
             for calendar in calendars:
                 calendar_id = calendar.get('id', 'N/A')
@@ -96,35 +93,17 @@ class CalendarManager:
                 calendar_primary = calendar.get('primary', False)
                 calendar_access_role = calendar.get('accessRole', 'N/A')
                 logger.info(f"カレンダー詳細: ID={calendar_id}, タイトル={calendar_summary}, プライマリー={calendar_primary}, アクセス権限={calendar_access_role}")
-            
-            # 指定されたカレンダーIDを検索
-            target_calendar_id = 'mmms.dy.23@gmail.com'
-            logger.info(f"指定されたカレンダーIDを検索中: {target_calendar_id}")
-            
-            for calendar in calendars:
-                if calendar.get('id') == target_calendar_id:
-                    logger.info(f"指定されたカレンダーが見つかりました: {target_calendar_id}")
-                    return target_calendar_id
-            
-            logger.warning(f"指定されたカレンダーが見つかりませんでした: {target_calendar_id}")
-            
-            # 指定されたカレンダーが見つからない場合は、プライマリーカレンダーを検索
+            # プライマリーカレンダーを優先
             for calendar in calendars:
                 if calendar.get('primary', False):
-                    calendar_id = calendar['id']
-                    logger.warning(f"指定されたカレンダーが見つからないため、プライマリーカレンダーを使用します: {calendar_id}")
-                    return calendar_id
-            
-            # プライマリーカレンダーも見つからない場合は、最初のカレンダーを使用
+                    logger.info(f"プライマリーカレンダーを使用: {calendar['id']}")
+                    return calendar['id']
+            # なければ最初のカレンダー
             if calendars:
-                calendar_id = calendars[0]['id']
-                logger.warning(f"プライマリーカレンダーも見つからないため、最初のカレンダーを使用します: {calendar_id}")
-                return calendar_id
-            
-            # カレンダーが見つからない場合は、デフォルトのカレンダーIDを使用
-            logger.warning("利用可能なカレンダーが見つかりません。デフォルトのカレンダーIDを使用します。")
+                logger.warning(f"プライマリーが見つからないため最初のカレンダーを使用: {calendars[0]['id']}")
+                return calendars[0]['id']
+            logger.error("カレンダーが見つかりませんでした")
             return 'primary'
-            
         except Exception as e:
             logger.error(f"カレンダーIDの取得に失敗: {str(e)}")
             logger.error(traceback.format_exc())
