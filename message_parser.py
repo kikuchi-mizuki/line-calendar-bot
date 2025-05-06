@@ -793,54 +793,53 @@ def extract_datetime_from_message(text: str, operation_type: str = None) -> Opti
 def extract_time(message: str) -> Dict:
     """
     メッセージから時間情報を抽出する
-    
     Args:
         message (str): 入力メッセージ
-        
     Returns:
         Dict: 時間情報を含む辞書
     """
     try:
-        # 現在時刻を取得
         now = datetime.now(JST)
-        
-        # メッセージの正規化
         normalized_message = normalize_text(message)
         logger.debug(f"正規化後のメッセージ: {normalized_message}")
         logger.debug(f"現在時刻: {now}")
-        
+
+        # まず月日を抽出
+        date_pattern = r"(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
+        date_match = re.search(date_pattern, normalized_message)
+        base_date = now.date()
+        if date_match:
+            month = int(date_match.group('month'))
+            day = int(date_match.group('day'))
+            year = now.year
+            # 過去日付なら来年扱い
+            if date(year, month, day) < now.date():
+                year += 1
+            base_date = date(year, month, day)
+            logger.debug(f"抽出された日付: {base_date}")
+
         # 時間パターンの定義（優先順位付き）
         time_patterns = [
-            # 時間範囲のパターン
-            (r'(\d{1,2})時から(\d{1,2})時', 'range'),  # "8時から10時" のようなパターン
-            (r'(\d{1,2}):(\d{2})から(\d{1,2}):(\d{2})', 'range'),  # "8:30から10:30" のようなパターン
-            
-            # 開始時刻のパターン
-            (r'(\d{1,2})時から', 'start'),  # "8時から" のようなパターン
-            (r'(\d{1,2}):(\d{2})から', 'start'),  # "8:30から" のようなパターン
-            (r'(\d{1,2})時', 'start'),     # "8時" のようなパターン
-            (r'(\d{1,2}):(\d{2})', 'start'),      # "8:30" のようなパターン
-            
-            # 午前/午後のパターン
-            (r'午前(\d{1,2})時', 'start'),  # "午前8時" のようなパターン
-            (r'午後(\d{1,2})時', 'start'),  # "午後8時" のようなパターン
-            (r'朝(\d{1,2})時', 'start'),    # "朝8時" のようなパターン
-            (r'夜(\d{1,2})時', 'start'),    # "夜8時" のようなパターン
+            (r'(\d{1,2})時から(\d{1,2})時', 'range'),
+            (r'(\d{1,2}):(\d{2})から(\d{1,2}):(\d{2})', 'range'),
+            (r'(\d{1,2})時から', 'start'),
+            (r'(\d{1,2}):(\d{2})から', 'start'),
+            (r'(\d{1,2})時', 'start'),
+            (r'(\d{1,2}):(\d{2})', 'start'),
+            (r'午前(\d{1,2})時', 'start'),
+            (r'午後(\d{1,2})時', 'start'),
+            (r'朝(\d{1,2})時', 'start'),
+            (r'夜(\d{1,2})時', 'start'),
         ]
-        
-        # 時間情報の初期化
         time_info = {
             'start_time': None,
             'end_time': None,
             'date_only': False
         }
-        
-        # 時間パターンの検索
         for pattern, time_type in time_patterns:
             match = re.search(pattern, normalized_message)
             if match:
                 if time_type == 'range':
-                    # 時間範囲の処理
                     if ':' in pattern:
                         start_hour = int(match.group(1))
                         start_minute = int(match.group(2))
@@ -851,63 +850,28 @@ def extract_time(message: str) -> Dict:
                         start_minute = 0
                         end_hour = int(match.group(2))
                         end_minute = 0
-                    
-                    time_info['start_time'] = now.replace(
-                        hour=start_hour,
-                        minute=start_minute,
-                        second=0,
-                        microsecond=0
-                    )
-                    time_info['end_time'] = now.replace(
-                        hour=end_hour,
-                        minute=end_minute,
-                        second=0,
-                        microsecond=0
-                    )
+                    time_info['start_time'] = datetime.combine(base_date, time(start_hour, start_minute), tzinfo=JST)
+                    time_info['end_time'] = datetime.combine(base_date, time(end_hour, end_minute), tzinfo=JST)
                     break
                 else:
-                    # 開始時刻の処理
                     if ':' in pattern:
                         hour = int(match.group(1))
                         minute = int(match.group(2))
                     else:
                         hour = int(match.group(1))
                         minute = 0
-                    
-                    # 午後や夜の時間を24時間形式に変換
                     if '午後' in pattern or '夜' in pattern:
                         if hour < 12:
                             hour += 12
-                    
-                    time_info['start_time'] = now.replace(
-                        hour=hour,
-                        minute=minute,
-                        second=0,
-                        microsecond=0
-                    )
-                    # 終了時間を1時間後に設定
+                    time_info['start_time'] = datetime.combine(base_date, time(hour, minute), tzinfo=JST)
                     time_info['end_time'] = time_info['start_time'] + timedelta(hours=1)
                     break
-        
-        # 時間が見つからない場合は日付のみとして扱う
         if time_info['start_time'] is None:
             time_info['date_only'] = True
-            time_info['start_time'] = now.replace(
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0
-            )
-            time_info['end_time'] = now.replace(
-                hour=23,
-                minute=59,
-                second=59,
-                microsecond=999999
-            )
-        
+            time_info['start_time'] = datetime.combine(base_date, time(0, 0), tzinfo=JST)
+            time_info['end_time'] = datetime.combine(base_date, time(23, 59, 59), tzinfo=JST)
         logger.debug(f"抽出された時間情報: {time_info}")
         return time_info
-        
     except Exception as e:
         logger.error(f"時間の抽出中にエラーが発生: {str(e)}")
         logger.error(traceback.format_exc())
