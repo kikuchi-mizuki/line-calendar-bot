@@ -466,7 +466,8 @@ class CalendarManager:
                 )
                 try:
                     result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
-                    events = result.get('items', [])
+                    response = result.execute()
+                    events = response.get('items', [])
                     
                     # タイトルでフィルタリング
                     if title:
