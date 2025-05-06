@@ -70,8 +70,8 @@ if not credentials_path:
         f.write(credentials_json)
         credentials_path = f.name
 
-# CalendarManagerの初期化
-calendar_manager = CalendarManager(credentials_path)
+# CalendarManagerの初期化を削除
+# calendar_manager = CalendarManager(credentials_path)
 
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your-secret-key-here')
@@ -464,15 +464,18 @@ def get_user_credentials(line_user_id):
 # Googleカレンダー予定一覧を取得
 
 def get_user_events(line_user_id):
-    credentials = get_user_credentials(line_user_id)
-    if not credentials:
+    try:
+        calendar_manager = CalendarManager(line_user_id)
+        events = asyncio.run(calendar_manager.get_events(
+            start_time=datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0),
+            end_time=datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=999999)
+        ))
+        if not events:
+            return "予定はありません。"
+        return format_event_list(events)
+    except Exception as e:
+        logger.error(f"予定の取得中にエラーが発生: {str(e)}")
         return None
-    service = googleapiclient.discovery.build('calendar', 'v3', credentials=credentials)
-    events_result = service.events().list(calendarId='primary', maxResults=10).execute()
-    events = events_result.get('items', [])
-    if not events:
-        return "予定はありません。"
-    return "\n".join([event['summary'] for event in events if 'summary' in event])
 
 @handler.add(MessageEvent)
 def handle_message(event):
@@ -490,6 +493,23 @@ def handle_message(event):
     try:
         # メッセージの取得
         text = event.message.text
+        line_user_id = event.source.user_id
+        
+        # 今日の予定を教えて
+        if text == "今日の予定を教えて":
+            events_message = get_user_events(line_user_id)
+            if events_message is None:
+                send_google_auth_link(line_user_id)
+                reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
+            else:
+                reply_message = events_message
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_message)]
+                )
+            )
+            return
         
         # メッセージの解析
         result = parse_message(text)
@@ -529,6 +549,7 @@ def handle_message(event):
                 
         # カレンダー操作の実行
         if operation_type == 'update':
+            calendar_manager = CalendarManager(line_user_id)
             success = calendar_manager.update_event(
                 start_time=datetime_info['start_time'],
                 end_time=datetime_info['end_time'],
@@ -545,6 +566,7 @@ def handle_message(event):
                 
         elif operation_type in ['read', 'check']:
             try:
+                calendar_manager = CalendarManager(line_user_id)
                 start = result.get('start_time')
                 end = result.get('end_time')
                 # 日付のみの場合は0:00〜23:59に補正
@@ -567,6 +589,7 @@ def handle_message(event):
                 
         elif operation_type == 'add':
             try:
+                calendar_manager = CalendarManager(line_user_id)
                 # 時間情報の抽出
                 time_info = extract_time(text)
                 if not time_info['date_only']:
@@ -603,6 +626,7 @@ def handle_message(event):
                 
         elif operation_type == 'delete':
             try:
+                calendar_manager = CalendarManager(line_user_id)
                 result = asyncio.run(calendar_manager.delete_event(
                     start_time=result['start_time'],
                     end_time=result['end_time'],
@@ -642,22 +666,6 @@ def handle_message(event):
         except Exception as e:
             logger.error(f"エラーメッセージの送信中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
-
-    # handle_messageで「今日の予定を教えて」に対応
-    if text == "今日の予定を教えて":
-        events_message = get_user_events(event.source.user_id)
-        if events_message is None:
-            send_google_auth_link(event.source.user_id)
-            reply_message = "Googleカレンダー連携が必要です。上のボタンから連携してください。"
-        else:
-            reply_message = events_message
-        messaging_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_message)]
-            )
-        )
-        return
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
