@@ -442,25 +442,22 @@ def callback():
         return 'OK', 200
 
 # user_tokens.jsonからユーザーごとのGoogle認証情報を取得
-
 def get_user_credentials(line_user_id):
     try:
-        with open('user_tokens.json', 'r') as f:
-            tokens = json.load(f)
-    except FileNotFoundError:
-        tokens = {}
-    user_token = tokens.get(line_user_id)
-    if not user_token:
+        credentials = db_manager.get_google_credentials(line_user_id)
+        if not credentials:
+            return None
+        return google.oauth2.credentials.Credentials(
+            token=credentials['token'],
+            refresh_token=credentials['refresh_token'],
+            token_uri=credentials['token_uri'],
+            client_id=credentials['client_id'],
+            client_secret=credentials['client_secret'],
+            scopes=credentials['scopes']
+        )
+    except Exception as e:
+        logger.error(f"Google認証情報の取得に失敗: {str(e)}")
         return None
-    credentials = google.oauth2.credentials.Credentials(
-        token=user_token['token'],
-        refresh_token=user_token['refresh_token'],
-        token_uri=user_token['token_uri'],
-        client_id=user_token['client_id'],
-        client_secret=user_token['client_secret'],
-        scopes=user_token['scopes']
-    )
-    return credentials
 
 # Googleカレンダー予定一覧を取得
 
@@ -820,23 +817,23 @@ def oauth2callback():
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
     line_user_id = session.get('line_user_id')
-    # トークンをファイルに保存（本番はDB推奨）
+    
     if line_user_id:
         try:
-            with open('user_tokens.json', 'r') as f:
-                tokens = json.load(f)
-        except FileNotFoundError:
-            tokens = {}
-        tokens[line_user_id] = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes
-        }
-        with open('user_tokens.json', 'w') as f:
-            json.dump(tokens, f)
+            # 認証情報をデータベースに保存
+            db_manager.save_google_credentials(line_user_id, {
+                'token': credentials.token,
+                'refresh_token': credentials.refresh_token,
+                'token_uri': credentials.token_uri,
+                'client_id': credentials.client_id,
+                'client_secret': credentials.client_secret,
+                'scopes': credentials.scopes,
+                'expires_at': credentials.expiry.timestamp() if credentials.expiry else None
+            })
+        except Exception as e:
+            logger.error(f"Google認証情報の保存に失敗: {str(e)}")
+            return 'Google連携に失敗しました。もう一度お試しください。'
+    
     return 'Google連携が完了しました！このウィンドウを閉じてLINEに戻ってください。'
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']

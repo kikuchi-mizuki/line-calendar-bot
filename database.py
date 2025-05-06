@@ -2,6 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
+import json
 
 # ログ設定
 logger = logging.getLogger(__name__)
@@ -52,6 +53,22 @@ class DatabaseManager:
                         end_time TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Google認証情報テーブルの作成
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS google_credentials (
+                        line_user_id TEXT PRIMARY KEY,
+                        token TEXT NOT NULL,
+                        refresh_token TEXT NOT NULL,
+                        token_uri TEXT NOT NULL,
+                        client_id TEXT NOT NULL,
+                        client_secret TEXT NOT NULL,
+                        scopes TEXT NOT NULL,
+                        expires_at TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (line_user_id) REFERENCES users(line_user_id)
                     )
                 ''')
                 
@@ -280,4 +297,70 @@ class DatabaseManager:
             return {
                 'operation_counts': {},
                 'last_operation': None
-            } 
+            }
+
+    def save_google_credentials(self, line_user_id: str, credentials: dict):
+        """Google認証情報を保存"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # ユーザーが存在しない場合は作成
+                cursor.execute('INSERT OR IGNORE INTO users (line_user_id) VALUES (?)', (line_user_id,))
+                # 認証情報を保存
+                cursor.execute('''
+                    INSERT OR REPLACE INTO google_credentials 
+                    (line_user_id, token, refresh_token, token_uri, client_id, client_secret, scopes, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    line_user_id,
+                    credentials['token'],
+                    credentials['refresh_token'],
+                    credentials['token_uri'],
+                    credentials['client_id'],
+                    credentials['client_secret'],
+                    json.dumps(credentials['scopes']),
+                    datetime.fromtimestamp(credentials.get('expires_at', 0)).isoformat() if credentials.get('expires_at') else None
+                ))
+                conn.commit()
+                logger.info(f"Google認証情報を保存しました: {line_user_id}")
+        except Exception as e:
+            logger.error(f"Google認証情報の保存に失敗: {str(e)}")
+            raise
+
+    def get_google_credentials(self, line_user_id: str) -> dict:
+        """Google認証情報を取得"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT token, refresh_token, token_uri, client_id, client_secret, scopes, expires_at
+                    FROM google_credentials
+                    WHERE line_user_id = ?
+                ''', (line_user_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'token': row[0],
+                        'refresh_token': row[1],
+                        'token_uri': row[2],
+                        'client_id': row[3],
+                        'client_secret': row[4],
+                        'scopes': json.loads(row[5]),
+                        'expires_at': datetime.fromisoformat(row[6]).timestamp() if row[6] else None
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Google認証情報の取得に失敗: {str(e)}")
+            return None
+
+    def delete_google_credentials(self, line_user_id: str):
+        """Google認証情報を削除"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM google_credentials WHERE line_user_id = ?', (line_user_id,))
+                conn.commit()
+                logger.info(f"Google認証情報を削除しました: {line_user_id}")
+        except Exception as e:
+            logger.error(f"Google認証情報の削除に失敗: {str(e)}")
+            raise 

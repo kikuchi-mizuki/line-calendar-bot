@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import signal
 from contextlib import contextmanager
 from tenacity import retry, stop_after_attempt, wait_exponential
+from google.auth.transport.requests import Request
 
 # ログ設定
 logger = logging.getLogger(__name__)
@@ -48,6 +49,23 @@ class CalendarManager:
         Google Calendar APIサービスを初期化（OAuth認証）
         """
         try:
+            # トークンの有効期限をチェック
+            if self.credentials.expired and self.credentials.refresh_token:
+                self.credentials.refresh(Request())
+                # 更新された認証情報をデータベースに保存
+                db_manager.save_google_credentials(
+                    self.credentials.user_id,
+                    {
+                        'token': self.credentials.token,
+                        'refresh_token': self.credentials.refresh_token,
+                        'token_uri': self.credentials.token_uri,
+                        'client_id': self.credentials.client_id,
+                        'client_secret': self.credentials.client_secret,
+                        'scopes': self.credentials.scopes,
+                        'expires_at': self.credentials.expiry.timestamp() if self.credentials.expiry else None
+                    }
+                )
+            
             self.service = build('calendar', 'v3', credentials=self.credentials)
             logger.info("Google Calendar APIサービスを初期化しました（OAuth認証）")
             # カレンダーIDを取得
