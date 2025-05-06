@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import google.oauth2.credentials
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
+import sys
 
 # 警告の抑制
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -48,7 +49,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
         logging.FileHandler('app.log', encoding='utf-8')
     ]
 )
