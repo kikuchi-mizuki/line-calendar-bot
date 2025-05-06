@@ -467,6 +467,7 @@ def get_user_events(line_user_id):
         if not credentials:
             return None
         calendar_manager = CalendarManager(credentials)
+        logger.debug(f"get_events呼び出し: start_time={datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0)}, end_time={datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=999999)}")
         events = asyncio.run(calendar_manager.get_events(
             start_time=datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0),
             end_time=datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -589,6 +590,7 @@ def handle_message(event):
                         start = JST.localize(start)
                     if end.tzinfo is None:
                         end = JST.localize(end)
+                logger.debug(f"get_events呼び出し: start_time={start}, end_time={end}")
                 events = asyncio.run(calendar_manager.get_events(
                     start_time=start,
                     end_time=end
