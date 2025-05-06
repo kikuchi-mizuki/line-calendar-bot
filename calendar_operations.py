@@ -530,9 +530,16 @@ class CalendarManager:
             events = await self.get_events(search_start, search_end)
             matched = []
             for e in events:
-                # タイトル部分一致
-                if title and title not in e.get('summary', ''):
-                    continue
+                event_title = e.get('summary', '')
+                # タイトルが指定されていない場合は全件対象
+                if title:
+                    # どちらかが短い場合は短い方で部分一致
+                    if len(title) < len(event_title):
+                        if title not in event_title:
+                            continue
+                    else:
+                        if event_title not in title:
+                            continue
                 # 指定時刻に最も近いイベントを優先
                 event_start_str = e['start'].get('dateTime') or e['start'].get('date')
                 if not event_start_str:
