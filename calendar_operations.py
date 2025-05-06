@@ -249,65 +249,31 @@ class CalendarManager:
         Args:
             start_time (datetime): 開始時間
             end_time (datetime): 終了時間
-            title (Optional[str]): イベントのタイトル（オプション）
+            title (Optional[str]): イベントのタイトル
             
         Returns:
             Dict: 操作結果
         """
         try:
-            # タイムゾーンの設定
-            jst = pytz.timezone('Asia/Tokyo')
-            start_time = start_time.astimezone(jst)
-            end_time = end_time.astimezone(jst)
+            # タイムゾーンを設定
+            time_zone = pytz.timezone('Asia/Tokyo')
+            start_time = time_zone.localize(start_time) if start_time.tzinfo is None else start_time.astimezone(time_zone)
+            end_time = time_zone.localize(end_time) if end_time.tzinfo is None else end_time.astimezone(time_zone)
             
-            # イベントの検索範囲を調整（前後2時間）
-            search_start = start_time - timedelta(hours=2)
-            search_end = end_time + timedelta(hours=2)
+            # イベントを検索
+            events = await self._find_events(start_time, end_time, title)
+            if not events:
+                return {
+                    "success": False,
+                    "message": "指定された時間帯に予定が見つかりませんでした。",
+                    "deleted_count": 0
+                }
             
-            # 検索範囲のログ出力
-            logger.debug(f"イベント検索範囲: {search_start} から {search_end}")
-            
-            # イベントの検索条件を設定
-            time_min = search_start.isoformat()
-            time_max = search_end.isoformat()
-            
-            # 検索条件のログ出力
-            logger.debug(f"検索条件: timeMin={time_min}, timeMax={time_max}")
-            
-            # ThreadPoolExecutorを使用してタイムアウトを実装
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self.service.events().list,
-                    calendarId=self.calendar_id,
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    singleEvents=True,
-                    orderBy='startTime'
-                )
+            deleted_count = 0
+            for event in events:
                 try:
-                    result = future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
-                    events = result.get('items', [])
-                    
-                    # イベントの詳細をログ出力
-                    if events:
-                        for event in events:
-                            logger.debug(f"検出されたイベント: {event.get('summary')} ({event.get('start', {}).get('dateTime')} - {event.get('end', {}).get('dateTime')})")
-                    else:
-                        logger.debug("検出されたイベントはありません")
-                    
-                    if not events:
-                        return {
-                            'success': False,
-                            'message': '指定された時間帯に予定が見つかりませんでした。',
-                            'context': 'イベントの削除中に検索に失敗しました。'
-                        }
-                        
                     # ThreadPoolExecutorを使用してタイムアウトを実装
-                    deleted_count = 0
-                    for event in events:
-                        if title and event.get('summary') != title:
-                            continue
-
+                    with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(
                             self.service.events().delete,
                             calendarId=self.calendar_id,
@@ -316,42 +282,40 @@ class CalendarManager:
                         try:
                             future.result(timeout=CALENDAR_TIMEOUT_SECONDS)
                             deleted_count += 1
-                            logger.debug(f"検出されたイベント: {event.get('summary', '')} ({event['start'].get('dateTime', '')} - {event['end'].get('dateTime', '')})")
+                            logger.info(f"イベントを削除しました: {event.get('summary', 'タイトルなし')}")
                         except TimeoutError:
                             logger.error(f"イベントの削除が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
+                            continue
                         except Exception as e:
                             logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
                             logger.error(traceback.format_exc())
-                    
-                    logger.info(f"イベントを削除しました: {deleted_count}件")
-                    return {
-                        'success': True,
-                        'deleted_count': deleted_count
-                    }
-                    
-                except TimeoutError:
-                    logger.error(f"イベントの削除が{CALENDAR_TIMEOUT_SECONDS}秒でタイムアウトしました")
-                    return {
-                        'success': False,
-                        'message': '予定の削除に時間がかかりすぎています。もう一度お試しください。',
-                        'error': 'タイムアウト'
-                    }
+                            continue
                 except Exception as e:
                     logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
                     logger.error(traceback.format_exc())
-                    return {
-                        'success': False,
-                        'message': str(e),
-                        'context': 'イベントの削除中にエラーが発生しました。'
-                    }
+                    continue
             
+            if deleted_count > 0:
+                return {
+                    "success": True,
+                    "message": f"{deleted_count}件の予定を削除しました。",
+                    "deleted_count": deleted_count
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "予定の削除に失敗しました。",
+                    "deleted_count": 0
+                }
+                
         except Exception as e:
             logger.error(f"イベントの削除中にエラーが発生: {str(e)}")
             logger.error(traceback.format_exc())
             return {
-                'success': False,
-                'message': str(e),
-                'context': 'イベントの削除中にエラーが発生しました。'
+                "success": False,
+                "message": "予定の削除に失敗しました。",
+                "error": str(e),
+                "deleted_count": 0
             }
             
     def update_event(
